@@ -27,8 +27,8 @@ pub async fn insert(
         PayrollEntry,
         r#"INSERT INTO payroll_entries
             (employee_id, company_id, period_year, period_month, category, item_type,
-             description, amount, quantity, rate, is_taxable, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12)
+             description, amount, quantity, rate, is_taxable, created_by, editor_ids)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12, ARRAY[$12]::uuid[])
         RETURNING *"#,
         employee_id,
         company_id,
@@ -96,6 +96,10 @@ pub async fn update(
             rate = $11,
             is_taxable = COALESCE($12, is_taxable),
             updated_by = $13,
+            editor_ids = CASE
+                WHEN $13 = ANY(editor_ids) THEN editor_ids
+                ELSE array_append(editor_ids, $13)
+            END,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND is_processed = FALSE
         RETURNING *"#,
@@ -153,6 +157,29 @@ pub async fn mark_processed(
     Ok(res.rows_affected())
 }
 
+/// Retire staged overtime entries linked to the approved `overtime_applications`
+/// paid by `run_id` so they can never be orphaned or cancelled independently.
+pub async fn mark_processed_for_overtime_ids(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    overtime_ids: &[Uuid],
+) -> AppResult<u64> {
+    if overtime_ids.is_empty() {
+        return Ok(0);
+    }
+    let res = sqlx::query!(
+        r#"UPDATE payroll_entries
+           SET is_processed = TRUE, payroll_run_id = $1, updated_at = NOW()
+           WHERE overtime_application_id = ANY($2)
+             AND is_processed = FALSE"#,
+        run_id,
+        overtime_ids,
+    )
+    .execute(executor)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// Whether `actor_user_id` created or edited any manual staged `payroll_entries`
 /// consumed by `run_id` (excludes system-generated overtime/unpaid-leave/claim markers).
 pub async fn actor_authored_manual_entries_for_run(
@@ -166,8 +193,10 @@ pub async fn actor_authored_manual_entries_for_run(
             SELECT 1 FROM payroll_entries
             WHERE company_id = $1
               AND payroll_run_id = $2
+              AND overtime_application_id IS NULL
+              AND leave_request_id IS NULL
               AND item_type NOT IN ('overtime', 'unpaid_leave', 'claim_reimbursement')
-              AND (created_by = $3 OR updated_by = $3)
+              AND (created_by = $3 OR updated_by = $3 OR $3 = ANY(editor_ids))
         ) AS "authored!""#,
         company_id,
         run_id,
@@ -178,20 +207,19 @@ pub async fn actor_authored_manual_entries_for_run(
     Ok(authored)
 }
 
-/// Revert a run's staged entries back to unprocessed (used when deleting a run).
+/// Revert a run's staged entries back to unprocessed (used when deleting/cancelling/reversing a run)
+/// without overwriting original authorship (`updated_by` / `editor_ids`).
 pub async fn revert_for_run(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,
     company_id: Uuid,
-    updated_by: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"UPDATE payroll_entries
-        SET is_processed = FALSE, payroll_run_id = NULL, updated_at = NOW(), updated_by = $3
+        SET is_processed = FALSE, payroll_run_id = NULL, updated_at = NOW()
         WHERE payroll_run_id = $1 AND company_id = $2"#,
         run_id,
         company_id,
-        updated_by,
     )
     .execute(executor)
     .await?;

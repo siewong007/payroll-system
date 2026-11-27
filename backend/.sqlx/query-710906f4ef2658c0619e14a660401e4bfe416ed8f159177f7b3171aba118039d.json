@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO uploaded_files (stored_name, company_id, uploaded_by, file_size_bytes)\n           VALUES ($1, $2, $3, $4)\n           ON CONFLICT (stored_name) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "710906f4ef2658c0619e14a660401e4bfe416ed8f159177f7b3171aba118039d"
+}

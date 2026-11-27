@@ -1,12 +1,14 @@
-use aes_gcm::aead::{Aead, Generate};
+use aes_gcm::aead::{Aead, Generate, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use super::error::{AppError, AppResult};
 
 const NONCE_LEN: usize = 12;
+const V3_PREFIX: &str = "v3:";
 
 /// Domain string for the current derivation, from `TOTP_ENCRYPTION_KEY`.
 const KEY_DOMAIN: &[u8] = b"totp-secret-encryption-key:v2:";
@@ -39,6 +41,36 @@ pub fn encrypt_secret(plaintext: &str, totp_encryption_key: &str) -> AppResult<S
     encrypt_with_domain(KEY_DOMAIN, plaintext, totp_encryption_key)
 }
 
+/// Encrypts a secret at rest (AES-256-GCM) bound to `user_id` via AAD (`v3:`
+/// envelope), preventing ciphertext swapping across `user_totp` rows.
+pub fn encrypt_secret_for_user(
+    plaintext: &str,
+    totp_encryption_key: &str,
+    user_id: Uuid,
+) -> AppResult<String> {
+    let encoded = encrypt_with_domain_and_aad(
+        KEY_DOMAIN,
+        plaintext,
+        totp_encryption_key,
+        user_id.as_bytes(),
+    )?;
+    Ok(format!("{V3_PREFIX}{encoded}"))
+}
+
+/// Reverses [`encrypt_secret_for_user`] (and falls back to unprefixed v2
+/// ciphertext when reading pre-v3 rows prior to startup migration).
+pub fn decrypt_secret_for_user(
+    encoded: &str,
+    totp_encryption_key: &str,
+    user_id: Uuid,
+) -> AppResult<String> {
+    if let Some(rest) = encoded.strip_prefix(V3_PREFIX) {
+        decrypt_with_domain_and_aad(KEY_DOMAIN, rest, totp_encryption_key, user_id.as_bytes())
+    } else {
+        decrypt_secret(encoded, totp_encryption_key)
+    }
+}
+
 /// Reverses `encrypt_secret`.
 pub fn decrypt_secret(encoded: &str, totp_encryption_key: &str) -> AppResult<String> {
     decrypt_with_domain(KEY_DOMAIN, encoded, totp_encryption_key)
@@ -62,6 +94,15 @@ pub(crate) fn encrypt_with_legacy_jwt_derivation(
 }
 
 fn encrypt_with_domain(domain: &[u8], plaintext: &str, key_material: &str) -> AppResult<String> {
+    encrypt_with_domain_and_aad(domain, plaintext, key_material, b"")
+}
+
+fn encrypt_with_domain_and_aad(
+    domain: &[u8],
+    plaintext: &str,
+    key_material: &str,
+    aad: &[u8],
+) -> AppResult<String> {
     let cipher = Aes256Gcm::new_from_slice(&derive_key(domain, key_material))
         .map_err(|e| AppError::Internal(format!("Failed to init cipher: {e}")))?;
 
@@ -69,7 +110,13 @@ fn encrypt_with_domain(domain: &[u8], plaintext: &str, key_material: &str) -> Ap
     let nonce = Nonce::from(nonce_bytes);
 
     let ciphertext = cipher
-        .encrypt(&nonce, plaintext.as_bytes())
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext.as_bytes(),
+                aad,
+            },
+        )
         .map_err(|e| AppError::Internal(format!("Failed to encrypt secret: {e}")))?;
 
     let mut combined = nonce_bytes.to_vec();
@@ -78,6 +125,15 @@ fn encrypt_with_domain(domain: &[u8], plaintext: &str, key_material: &str) -> Ap
 }
 
 fn decrypt_with_domain(domain: &[u8], encoded: &str, key_material: &str) -> AppResult<String> {
+    decrypt_with_domain_and_aad(domain, encoded, key_material, b"")
+}
+
+fn decrypt_with_domain_and_aad(
+    domain: &[u8],
+    encoded: &str,
+    key_material: &str,
+    aad: &[u8],
+) -> AppResult<String> {
     let cipher = Aes256Gcm::new_from_slice(&derive_key(domain, key_material))
         .map_err(|e| AppError::Internal(format!("Failed to init cipher: {e}")))?;
 
@@ -95,7 +151,13 @@ fn decrypt_with_domain(domain: &[u8], encoded: &str, key_material: &str) -> AppR
     let nonce = Nonce::from(nonce_arr);
 
     let plaintext = cipher
-        .decrypt(&nonce, ciphertext)
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| AppError::Internal("Failed to decrypt secret".into()))?;
 
     String::from_utf8(plaintext).map_err(|e| AppError::Internal(format!("Corrupt secret: {e}")))

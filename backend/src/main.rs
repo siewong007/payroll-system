@@ -800,6 +800,43 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let orphan_upload_pool = pool.clone();
+    let mut orphan_upload_shutdown = shutdown_rx.clone();
+    let orphan_upload_handle = tokio::spawn(async move {
+        const ORPHAN_UPLOAD_LOCK_KEY: i64 = 7_492_026_103;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(4 * 60 * 60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Consume the initial immediate tick so the 4-hour sweep runs periodically
+        // after startup rather than duplicating the daily retention tick.
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = orphan_upload_shutdown.changed() => break,
+                _ = interval.tick() => {}
+            }
+            let Some(lock_conn) =
+                try_advisory_lock_guard(&orphan_upload_pool, ORPHAN_UPLOAD_LOCK_KEY).await
+            else {
+                continue;
+            };
+            match payroll_system::services::upload_service::purge_unreferenced_uploads(
+                &orphan_upload_pool,
+                24,
+            )
+            .await
+            {
+                Ok(rows) if rows > 0 => {
+                    tracing::info!(rows, "periodic unreferenced-uploads purge: completed");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!("Periodic unreferenced upload purge failed: {}", e);
+                }
+            }
+            release_advisory_lock(lock_conn, ORPHAN_UPLOAD_LOCK_KEY).await;
+        }
+    });
+
     tracing::info!("Starting server on {}", addr);
 
     axum::serve(
@@ -813,7 +850,13 @@ async fn main() -> anyhow::Result<()> {
     // Release the background loops so they stop between ticks instead of
     // dying mid-query when the runtime drops.
     let _ = shutdown_tx.send(true);
-    let _ = tokio::join!(cleanup_handle, absent_handle, outbox_handle, push_handle);
+    let _ = tokio::join!(
+        cleanup_handle,
+        orphan_upload_handle,
+        absent_handle,
+        outbox_handle,
+        push_handle
+    );
 
     tracing::info!("Shutting down — closing database pool...");
     pool.close().await;

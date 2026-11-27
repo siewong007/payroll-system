@@ -11,17 +11,20 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
-import type { Company, CreateCompanyRequest, UpdateCompanyRequest } from '@/types';
+import type { Company, CreateCompanyRequest, StepUpCredentials, UpdateCompanyRequest } from '@/types';
 
 export function CompanyManagement() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { setSession } = useAuth();
+  const { user: currentUser, setSession } = useAuth();
+  const actorTwoFactorEnabled = Boolean(currentUser?.two_factor_enabled);
   const toast = useToast();
   const [showCreate, setShowCreate] = useState(false);
   const [editCompany, setEditCompany] = useState<Company | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Company | null>(null);
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
+  const [deleteActorPassword, setDeleteActorPassword] = useState('');
+  const [deleteActorTotpCode, setDeleteActorTotpCode] = useState('');
   const [form, setForm] = useState<CreateCompanyRequest>({ name: '' });
   const [error, setError] = useState('');
 
@@ -52,7 +55,7 @@ export function CompanyManagement() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: deleteCompany,
+    mutationFn: ({ id, stepUp }: { id: string; stepUp: StepUpCredentials }) => deleteCompany(id, stepUp),
     onSuccess: (data) => {
       if (data?.token && data?.user) {
         setSession(data.token, data.user);
@@ -62,6 +65,8 @@ export function CompanyManagement() {
       toast.success(t('companies.deleteSuccess'));
       setDeleteTarget(null);
       setDeleteConfirmName('');
+      setDeleteActorPassword('');
+      setDeleteActorTotpCode('');
       setError('');
     },
     onError: (err: unknown) => {
@@ -362,7 +367,15 @@ export function CompanyManagement() {
       {/* Delete Company Confirmation Modal */}
       <Modal
         open={deleteTarget !== null}
-        onClose={() => { if (!deleteMutation.isPending) { setDeleteTarget(null); setDeleteConfirmName(''); setError(''); } }}
+        onClose={() => {
+          if (!deleteMutation.isPending) {
+            setDeleteTarget(null);
+            setDeleteConfirmName('');
+            setDeleteActorPassword('');
+            setDeleteActorTotpCode('');
+            setError('');
+          }
+        }}
         title={t('companies.deleteTitle')}
         maxWidth="max-w-md"
         footer={
@@ -370,15 +383,38 @@ export function CompanyManagement() {
             <button
               type="button"
               disabled={deleteMutation.isPending}
-              onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); setError(''); }}
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteConfirmName('');
+                setDeleteActorPassword('');
+                setDeleteActorTotpCode('');
+                setError('');
+              }}
               className="btn-secondary"
             >
               {t('common.cancel')}
             </button>
             <button
               type="button"
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-              disabled={!deleteTarget || deleteConfirmName !== deleteTarget.name || deleteMutation.isPending}
+              onClick={() =>
+                deleteTarget &&
+                deleteMutation.mutate({
+                  id: deleteTarget.id,
+                  stepUp: {
+                    actor_password: deleteActorPassword,
+                    ...(actorTwoFactorEnabled && deleteActorTotpCode.trim()
+                      ? { actor_totp_code: deleteActorTotpCode.trim() }
+                      : {}),
+                  },
+                })
+              }
+              disabled={
+                !deleteTarget ||
+                deleteConfirmName !== deleteTarget.name ||
+                !deleteActorPassword ||
+                (actorTwoFactorEnabled && !deleteActorTotpCode.trim()) ||
+                deleteMutation.isPending
+              }
               className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 transition-colors"
             >
               {deleteMutation.isPending ? (
@@ -415,6 +451,37 @@ export function CompanyManagement() {
                 placeholder={deleteTarget.name}
               />
             </div>
+            <FormField label={t('users.confirmWithYourPassword')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="password"
+                  value={deleteActorPassword}
+                  onChange={(e) => setDeleteActorPassword(e.target.value)}
+                  placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+                  className="form-input"
+                  autoComplete="current-password"
+                  required
+                />
+              )}
+            </FormField>
+            {actorTwoFactorEnabled && (
+              <FormField label={t('auth.twoFactor.title')} required>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    inputMode="text"
+                    autoComplete="one-time-code"
+                    value={deleteActorTotpCode}
+                    onChange={(e) => setDeleteActorTotpCode(e.target.value)}
+                    placeholder="123456"
+                    className="form-input text-center tracking-widest"
+                    required
+                  />
+                )}
+              </FormField>
+            )}
           </div>
         )}
       </Modal>

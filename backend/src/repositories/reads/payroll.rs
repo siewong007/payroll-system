@@ -201,7 +201,7 @@ pub async fn attendance_ot_hours(
                        ON ar.employee_id = oa.employee_id
                        AND oa.ot_date = ld.local_date
                        AND oa.ot_date >= $3 AND oa.ot_date <= $4
-                       AND oa.status = 'approved'
+                       AND oa.status IN ('approved', 'processed')
                    WHERE ar.company_id = $2
                      AND ar.employee_id = ANY($1)
                      AND ar.check_in_at >= ($3::date)::timestamp AT TIME ZONE $5

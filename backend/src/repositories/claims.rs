@@ -122,6 +122,24 @@ pub async fn insert(
     Ok(claim)
 }
 
+/// Count remaining draft claims for an employee in a company (enforces per-employee draft cap).
+pub async fn count_drafts_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*)::bigint AS "count!"
+           FROM claims
+           WHERE employee_id = $1 AND company_id = $2 AND status = 'draft'"#,
+        employee_id,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
+}
+
 /// An editable claim (draft/pending/rejected), or `None`.
 pub async fn get_editable(
     executor: impl Executor<'_, Database = Postgres>,

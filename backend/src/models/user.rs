@@ -24,6 +24,10 @@ pub struct User {
     pub failed_login_attempts: i32,
     #[serde(skip_serializing)]
     pub login_locked_until: Option<DateTime<Utc>>,
+    #[serde(skip_serializing)]
+    pub step_up_failed_attempts: i32,
+    #[serde(skip_serializing)]
+    pub step_up_locked_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize, Validate)]

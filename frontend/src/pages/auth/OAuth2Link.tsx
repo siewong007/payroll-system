@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { linkGoogleAccount } from '@/api/oauth2';
+import { createSingleReadUrlParams } from '@/lib/oauthParams';
 import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -11,24 +12,7 @@ import { AuthLayout } from '@/components/layout/AuthLayout';
 
 const RETURN_PATH_KEY = 'oauth2_link_return';
 
-/**
- * Google lands here with ?code&state in the query string (the authorization
- * response is a redirect, not our fragment convention). Same single-read rule
- * as OAuth2Callback: the params are stripped from the URL on first read, so a
- * StrictMode remount must see the memo, not an empty search string.
- */
-let linkParams: URLSearchParams | null = null;
-
-function takeLinkParams(): URLSearchParams {
-  const fromQuery = new URLSearchParams(window.location.search);
-
-  if (Array.from(fromQuery.keys()).length > 0) {
-    linkParams = fromQuery;
-    window.history.replaceState(null, '', window.location.pathname);
-  }
-
-  return linkParams ?? fromQuery;
-}
+const linkUrlParams = createSingleReadUrlParams('search');
 
 function readReturnPath(): string | null {
   try {
@@ -67,11 +51,11 @@ export function OAuth2Link() {
       return;
     }
 
-    const params = takeLinkParams();
+    const params = linkUrlParams.take();
 
     const providerError = params.get('error');
     if (providerError) {
-      linkParams = null;
+      linkUrlParams.clear();
       setError(
         providerError === 'access_denied'
           ? t('auth.oauthLink.cancelled')
@@ -81,7 +65,7 @@ export function OAuth2Link() {
     }
 
     if (!isAuthenticated) {
-      linkParams = null;
+      linkUrlParams.clear();
       setError(t('auth.oauthLink.sessionLost'));
       return;
     }
@@ -89,7 +73,7 @@ export function OAuth2Link() {
     const code = params.get('code');
     const state = params.get('state');
     if (!code || !state) {
-      linkParams = null;
+      linkUrlParams.clear();
       setError(t('auth.oauthLink.missingData'));
       return;
     }
@@ -111,7 +95,7 @@ export function OAuth2Link() {
         password,
         ...(twoFactorEnabled && totpCode.trim() ? [totpCode.trim()] : []),
       );
-      linkParams = null;
+      linkUrlParams.clear();
       clearReturnPath();
       navigate(user?.must_change_password ? '/change-password' : (returnTo ?? '/'), { replace: true });
     } catch (err: unknown) {
@@ -197,7 +181,7 @@ export function OAuth2Link() {
               <Link
                 to={returnTo ?? '/'}
                 onClick={() => {
-                  linkParams = null;
+                  linkUrlParams.clear();
                   clearReturnPath();
                 }}
                 className="inline-flex min-h-11 items-center justify-center px-3 rounded-xl text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
@@ -224,7 +208,7 @@ export function OAuth2Link() {
           <Link
             to={returnTo ?? '/'}
             onClick={() => {
-              linkParams = null;
+              linkUrlParams.clear();
               clearReturnPath();
             }}
             className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-black dark:text-indigo-400 font-medium hover:underline rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"

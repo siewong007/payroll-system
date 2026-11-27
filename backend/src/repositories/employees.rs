@@ -486,6 +486,25 @@ pub async fn existing_numbers_and_ics(
         .collect())
 }
 
+/// Existing normalized non-empty emails for a company's non-deleted employees.
+pub async fn existing_normalized_emails(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let rows = sqlx::query_scalar!(
+        r#"SELECT lower(btrim(email)) AS "email!"
+           FROM employees
+           WHERE company_id = $1
+             AND deleted_at IS NULL
+             AND email IS NOT NULL
+             AND btrim(email) <> ''"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
 /// Insert one employee from a bulk-import row (no RETURNING; the caller handles
 /// per-row success/failure). Enum columns are cast from text; missing
 /// residency/employment default to citizen/permanent.

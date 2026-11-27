@@ -66,8 +66,9 @@ describe('datetime-local round trip', () => {
 });
 
 describe('safeRedirectPath', () => {
-  it('accepts a same-origin path with its query string', () => {
+  it('accepts a same-origin path with its query string or fragment', () => {
     expect(safeRedirectPath('/attendance/scan?token=abc')).toBe('/attendance/scan?token=abc');
+    expect(safeRedirectPath('/attendance/scan#token=abc')).toBe('/attendance/scan#token=abc');
   });
 
   it('rejects protocol-relative and absolute targets', () => {

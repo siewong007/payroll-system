@@ -333,7 +333,11 @@ async fn gather_run_inputs(
                     .or_insert((0, Decimal::ZERO));
                 ul.0 = checked_add_money(ul.0, row.amount, "unpaid_leave_deduction")?;
                 if let Some(q) = row.quantity {
-                    ul.1 += q;
+                    ul.1 = ul.1.checked_add(q).ok_or_else(|| {
+                        AppError::BadRequest(
+                            "Payroll calculation overflow in unpaid_leave_days".into(),
+                        )
+                    })?;
                 }
             }
         }
@@ -903,7 +907,9 @@ pub async fn preview_payroll(
         let Some(oldest) = earlier.iter().map(|claim| claim.expense_date).min() else {
             continue;
         };
-        let total: i64 = earlier.iter().map(|claim| claim.amount).sum();
+        let total = earlier.iter().try_fold(0i64, |acc, claim| {
+            checked_add_money(acc, claim.amount, "claims_from_earlier_periods")
+        })?;
         warnings.push(
             PayrollDiagnostic::for_employee(
                 "claims_from_earlier_periods",
@@ -1628,9 +1634,14 @@ fn compute_payslip(
                 "public_holiday" => 2,
                 _ => 3,
             };
-            *by_type
+            let slot = by_type
                 .entry((rank, entry.ot_type.as_str()))
-                .or_insert(Decimal::ZERO) += entry.hours;
+                .or_insert(Decimal::ZERO);
+            *slot = slot.checked_add(entry.hours).ok_or_else(|| {
+                AppError::BadRequest(
+                    "Payroll calculation overflow in approved_overtime_hours".into(),
+                )
+            })?;
         }
         let mut total = 0i64;
         for ((_, ot_type), hours) in by_type {
@@ -2027,6 +2038,7 @@ async fn persist_all_payslips(
                     .into(),
             ));
         }
+        payroll_entries::mark_processed_for_overtime_ids(&mut **tx, run_id, &overtime_ids).await?;
     }
 
     Ok(())

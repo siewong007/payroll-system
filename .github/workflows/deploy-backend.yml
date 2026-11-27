@@ -72,16 +72,17 @@ jobs:
             echo "Skipping superseded commit $CANDIDATE_SHA; $HEAD_BRANCH is $latest_sha."
           fi
 
-  deploy:
-    name: Build and deploy to the AIC VPS
+  build-backend:
+    name: Build backend release bundle
     needs: gate
     if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    environment: production
+    timeout-minutes: 45
+    outputs:
+      bundle_sha256: ${{ steps.package.outputs.bundle_sha256 }}
+      archive_bytes: ${{ steps.package.outputs.archive_bytes }}
     env:
       DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
-      HEAD_BRANCH: ${{ needs.gate.outputs.branch }}
 
     steps:
       - name: Check out the tested commit
@@ -124,6 +125,7 @@ jobs:
             "payroll-backend:$DEPLOY_SHA")" = "linux/amd64"
 
       - name: Create checksummed release bundle
+        id: package
         shell: bash
         run: |
           set -euo pipefail
@@ -157,6 +159,47 @@ jobs:
           )
           tar -C "$bundle_dir" -czf "$bundle_path" .
           ls -lh "$bundle_path"
+          bundle_sha256=$(sha256sum "$bundle_path" | awk '{print $1}')
+          archive_bytes=$(wc -c < "$bundle_path" | tr -d ' ')
+          printf 'bundle_sha256=%s\narchive_bytes=%s\n' "$bundle_sha256" "$archive_bytes" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backend-bundle-${{ needs.gate.outputs.sha }}
+          path: ${{ runner.temp }}/payroll-${{ needs.gate.outputs.sha }}.tar.gz
+          retention-days: 1
+
+  deploy:
+    name: Deploy bundle to the AIC VPS
+    needs: [gate, build-backend]
+    if: needs.gate.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+      HEAD_BRANCH: ${{ needs.gate.outputs.branch }}
+      BUNDLE_SHA256: ${{ needs.build-backend.outputs.bundle_sha256 }}
+      ARCHIVE_BYTES: ${{ needs.build-backend.outputs.archive_bytes }}
+
+    steps:
+      - name: Download release bundle artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: backend-bundle-${{ needs.gate.outputs.sha }}
+          path: ${{ runner.temp }}/bundle
+
+      - name: Verify release bundle checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ARCHIVE_BYTES" =~ ^[0-9]+$ ]]
+          archive="$RUNNER_TEMP/bundle/payroll-$DEPLOY_SHA.tar.gz"
+          test -f "$archive"
+          printf '%s  %s\n' "$BUNDLE_SHA256" "$archive" | sha256sum --check --status -
 
       - name: Configure pinned SSH access
         shell: bash
@@ -176,13 +219,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/payroll-$DEPLOY_SHA.tar.gz"
-          archive_bytes=$(wc -c < "$archive" | tr -d ' ')
-          [[ "$archive_bytes" =~ ^[0-9]+$ ]]
-
-          # Allow for the upload plus its extracted copy while preserving the
-          # deploy script's disk reserve for images and rollback.
-          required_bytes=$((4294967296 + (archive_bytes * 2)))
+          required_bytes=$((4294967296 + (ARCHIVE_BYTES * 2)))
           ssh \
             -i "$RUNNER_TEMP/vps-key" \
             -p "$VPS_PORT" \
@@ -193,15 +230,14 @@ jobs:
             -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$VPS_USER@$VPS_HOST" \
             "set -eu
-             for target in /tmp /opt; do
-               available=\$(df --output=avail -B1 \"\$target\" | tail -n 1 | tr -d ' ')
-               if [ \"\$available\" -lt $required_bytes ]; then
-                 echo \"Insufficient free space on \$target for a protected deployment\" >&2
-                 exit 1
-               fi
-             done"
+             install -d -m 0700 -o root -g root /opt/payroll /opt/payroll/.incoming
+             available=\$(df --output=avail -B1 /opt/payroll | tail -n 1 | tr -d ' ')
+             if [ \"\$available\" -lt $required_bytes ]; then
+               echo \"Insufficient free space on /opt/payroll for a protected deployment\" >&2
+               exit 1
+             fi"
 
-      - name: Upload release directly to the VPS
+      - name: Upload release directly to private VPS staging directory
         shell: bash
         run: |
           set -euo pipefail
@@ -213,8 +249,8 @@ jobs:
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
-            "$RUNNER_TEMP/payroll-$DEPLOY_SHA.tar.gz" \
-            "$VPS_USER@$VPS_HOST:/tmp/payroll-$DEPLOY_SHA.tar.gz.part"
+            "$RUNNER_TEMP/bundle/payroll-$DEPLOY_SHA.tar.gz" \
+            "$VPS_USER@$VPS_HOST:/opt/payroll/.incoming/payroll-$DEPLOY_SHA.tar.gz.part"
 
       - name: Deploy and wait for health checks
         shell: bash
@@ -243,14 +279,17 @@ jobs:
             -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$VPS_USER@$VPS_HOST" \
             "set -euo pipefail
-             trap 'rm -f /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz' EXIT
-             mv /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz
-             sudo rm -rf -- /opt/payroll/releases/$DEPLOY_SHA.incoming
-             sudo install -d -m 0750 /opt/payroll/releases/$DEPLOY_SHA.incoming
-             sudo tar -xzf /tmp/payroll-$DEPLOY_SHA.tar.gz -C /opt/payroll/releases/$DEPLOY_SHA.incoming
-             sudo rm -rf -- /opt/payroll/releases/$DEPLOY_SHA
-             sudo mv /opt/payroll/releases/$DEPLOY_SHA.incoming /opt/payroll/releases/$DEPLOY_SHA
-             sudo /bin/bash /opt/payroll/releases/$DEPLOY_SHA/deploy.sh \
+             staging='/opt/payroll/.incoming'
+             archive=\"\$staging/payroll-$DEPLOY_SHA.tar.gz\"
+             trap 'rm -f -- \"\$archive.part\" \"\$archive\"' EXIT
+             printf '%s  %s\n' '$BUNDLE_SHA256' \"\$archive.part\" | sha256sum --check --status -
+             mv \"\$archive.part\" \"\$archive\"
+             rm -rf -- /opt/payroll/releases/$DEPLOY_SHA.incoming
+             install -d -m 0750 /opt/payroll/releases/$DEPLOY_SHA.incoming
+             tar --no-same-owner --no-same-permissions -xzf \"\$archive\" -C /opt/payroll/releases/$DEPLOY_SHA.incoming
+             rm -rf -- /opt/payroll/releases/$DEPLOY_SHA
+             mv /opt/payroll/releases/$DEPLOY_SHA.incoming /opt/payroll/releases/$DEPLOY_SHA
+             /bin/bash /opt/payroll/releases/$DEPLOY_SHA/deploy.sh \
                $DEPLOY_SHA /opt/payroll/releases/$DEPLOY_SHA"
 
       - name: Authenticated-shaped business smoke (plan item 35)
@@ -282,7 +321,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          local_ready=$(ssh \
+          host_ready=$(ssh \
             -i "$RUNNER_TEMP/vps-key" \
             -p "$VPS_PORT" \
             -o BatchMode=yes \
@@ -292,6 +331,20 @@ jobs:
             -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$VPS_USER@$VPS_HOST" \
             "curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8080/api/health/ready")
+          if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"(ready|degraded)"' <<<"$host_ready"; then
+            echo "Host readiness status check failed: $host_ready" >&2
+            exit 1
+          fi
+          local_ready=$(ssh \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "docker exec payroll-backend curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8080/api/health/ready")
           if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${DEPLOY_SHA}\"" <<<"$local_ready"; then
             echo "Loopback readiness revision mismatch (expected $DEPLOY_SHA): $local_ready" >&2
             exit 1
@@ -324,7 +377,7 @@ jobs:
               -o StrictHostKeyChecking=yes \
               -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
               "$VPS_USER@$VPS_HOST" \
-              "rm -f -- /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz" \
+              "rm -f -- /opt/payroll/.incoming/payroll-$DEPLOY_SHA.tar.gz.part /opt/payroll/.incoming/payroll-$DEPLOY_SHA.tar.gz" \
               || true
           fi
 

@@ -29,8 +29,21 @@ vi.mock('@/api/totp', () => totpMocks);
 vi.mock('@/api/passkey', () => passkeyMocks);
 vi.mock('@/lib/webauthn', () => webauthnMocks);
 
+const authMocks = vi.hoisted(() => ({
+  user: null as null | { two_factor_enabled?: boolean },
+}));
+
+vi.mock('@/context/AuthContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/context/AuthContext')>();
+  return {
+    ...actual,
+    useAuth: () => ({ user: authMocks.user }),
+  };
+});
+
 import { TwoFactorSetup } from '@/components/TwoFactorSetup';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
+import { StepUpConfirmModal } from '@/components/ui/StepUpConfirmModal';
 
 function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -151,5 +164,36 @@ describe('Step-up password confirmation on credential enrollment', () => {
     await waitFor(() =>
       expect(passkeyMocks.deletePasskey).toHaveBeenCalledWith('pk-1', 'MyStepUpPass1!', '654321'),
     );
+  });
+
+  it('requires password and TOTP in StepUpConfirmModal when 2FA is enabled', async () => {
+    const typer = userEvent.setup();
+    const onConfirm = vi.fn();
+    authMocks.user = { two_factor_enabled: true };
+
+    render(
+      <StepUpConfirmModal
+        open
+        title="Confirm Sensitive Action"
+        confirmLabel="Confirm Action"
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const submit = await screen.findByRole('button', { name: 'Confirm Action' });
+    expect(submit).toBeDisabled();
+
+    await typer.type(screen.getByPlaceholderText('Current password'), 'MyStepUpPass1!');
+    expect(submit).toBeDisabled();
+
+    await typer.type(screen.getByPlaceholderText('123456'), '654321');
+    expect(submit).toBeEnabled();
+
+    await typer.click(submit);
+    expect(onConfirm).toHaveBeenCalledWith({
+      actor_password: 'MyStepUpPass1!',
+      actor_totp_code: '654321',
+    });
   });
 });

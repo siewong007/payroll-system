@@ -30,26 +30,6 @@ export interface PasskeyCreationOptionsEnvelope {
   publicKey: PublicKeyCredentialCreationOptionsJSON;
 }
 
-// Authentication (login) flow
-export async function passkeyAuthBegin(email: string, turnstileToken?: string) {
-  const { data } = await api.post('/auth/passkey/authenticate/begin', {
-    email,
-    turnstile_token: turnstileToken,
-  });
-  return data as { challenge_id: string; options: PasskeyRequestOptionsEnvelope };
-}
-
-export async function passkeyAuthComplete(
-  challengeId: string,
-  credential: AuthenticationResponseJSON,
-): Promise<LoginResponse | MfaRequiredResponse> {
-  const { data } = await api.post('/auth/passkey/authenticate/complete', {
-    challenge_id: challengeId,
-    credential,
-  });
-  return data;
-}
-
 // Discoverable authentication (no email required)
 export async function passkeyDiscoverableBegin(turnstileToken?: string) {
   const { data } = await api.post('/auth/passkey/discoverable/begin', {

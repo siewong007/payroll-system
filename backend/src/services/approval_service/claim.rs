@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
-use crate::core::upload_path::validate_optional_file_url;
+use crate::core::upload_path::validate_optional_managed_upload_url;
 use crate::models::portal::{Claim, CreateClaimRequest, UpdateClaimRequest};
 use crate::repositories::reads::approvals as approval_reads;
 use crate::repositories::{claims, users as user_repo};
@@ -35,7 +35,7 @@ pub async fn create_claim_admin(
     ensure_positive_amount(req.amount)?;
     // `receipt_url` is joined onto a filesystem path by the backup export and
     // restore paths, so it is settled at write time rather than at every sink.
-    validate_optional_file_url(req.receipt_url.as_deref())?;
+    validate_optional_managed_upload_url(req.receipt_url.as_deref())?;
     upload_service::ensure_upload_attach_authorized(
         pool,
         access,
@@ -98,7 +98,7 @@ pub async fn update_claim_admin(
     }
 
     let non_empty_receipt = req.receipt_url.as_deref().filter(|s| !s.is_empty());
-    validate_optional_file_url(non_empty_receipt)?;
+    validate_optional_managed_upload_url(non_empty_receipt)?;
     upload_service::ensure_upload_attach_authorized(pool, access, non_empty_receipt, false).await?;
 
     let updated = claims::update_full(
@@ -199,6 +199,18 @@ pub async fn cancel_claim_admin(
         .await?
         .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be cancelled".into()))?;
 
+    let is_self_target =
+        user_repo::is_employee_owned_by_user(&mut *tx, actor_id, current.employee_id, company_id)
+            .await?;
+    let actor_is_super_admin = user_repo::get_by_id(&mut *tx, actor_id)
+        .await?
+        .is_some_and(|u| u.roles.iter().any(|r| r == "super_admin"));
+    if current.status == "approved" && is_self_target && !actor_is_super_admin {
+        return Err(AppError::Forbidden(
+            "You cannot cancel your own approved claim. Ask another approver, or a super admin, to review it.".into(),
+        ));
+    }
+
     // Compare-and-swap: a run committing between the read above and this write
     // would otherwise have its just-paid claim cancelled out from under it.
     let cancelled = claims::set_cancelled(&mut *tx, claim_id, company_id)
@@ -228,6 +240,26 @@ pub async fn cancel_claim_admin(
         audit_meta,
     )
     .await;
+
+    if current.status == "approved" && is_self_target && actor_is_super_admin {
+        let _ = crate::services::audit_service::log_action_with_metadata(
+            pool,
+            Some(company_id),
+            Some(actor_id),
+            "self_approval_override",
+            "claim",
+            Some(cancelled.id),
+            None,
+            Some(serde_json::json!({
+                "employee_id": cancelled.employee_id,
+                "action": "cancel_claim_admin",
+                "self_target": true,
+            })),
+            Some("Super admin cancelled own approved claim (override logged)"),
+            audit_meta,
+        )
+        .await;
+    }
 
     Ok(cancelled)
 }

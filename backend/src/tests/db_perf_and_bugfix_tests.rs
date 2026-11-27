@@ -1088,26 +1088,29 @@ async fn backup_roundtrip_preserves_network_mode_snapshot_and_entry_links() {
         return;
     };
 
-    let src_company = seed_company(&pool).await;
-    let dst_company = seed_company(&pool).await;
+    let src_company = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO companies (id, name, is_active, attendance_network_mode, auto_absent_last_run_date)
+         VALUES ($1, $2, FALSE, 'enforce', DATE '2024-04-20')",
+    )
+    .bind(src_company)
+    .bind(format!("BackupSrc-{}", &src_company.to_string()[..8]))
+    .execute(&pool)
+    .await
+    .expect("insert inactive src company");
+
+    let dst_company = Uuid::new_v4();
+    sqlx::query("INSERT INTO companies (id, name, is_active) VALUES ($1, $2, FALSE)")
+        .bind(dst_company)
+        .bind(format!("BackupDst-{}", &dst_company.to_string()[..8]))
+        .execute(&pool)
+        .await
+        .expect("insert inactive dst company");
+
     let group_id = seed_payroll_group(&pool, src_company).await;
     let emp_id = seed_employee(&pool, src_company, Some(group_id), 450_000).await;
     let admin_id = seed_user(&pool, src_company, "payroll_admin").await;
     let dst_admin_id = seed_user(&pool, dst_company, "admin").await;
-
-    sqlx::query(
-        "UPDATE companies SET is_active = FALSE, attendance_network_mode = 'enforce', auto_absent_last_run_date = DATE '2024-04-20' WHERE id = $1",
-    )
-    .bind(src_company)
-    .execute(&pool)
-    .await
-    .expect("set network mode & bookmark");
-
-    sqlx::query("UPDATE companies SET is_active = FALSE WHERE id = $1")
-        .bind(dst_company)
-        .execute(&pool)
-        .await
-        .expect("isolate dst company from concurrent auto-absent sweeps");
 
     let lt_id = Uuid::new_v4();
     sqlx::query("INSERT INTO leave_types (id, company_id, name, default_days, is_paid) VALUES ($1, $2, 'Unpaid Leave', 30, FALSE)")

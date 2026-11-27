@@ -669,7 +669,12 @@ async fn company_admin_cannot_export_payroll_backup() {
 
     let response = app_for(pool)
         .await
-        .oneshot(request("GET", "/api/admin/backup/export", &token, ""))
+        .oneshot(request(
+            "POST",
+            "/api/admin/backup/export",
+            &token,
+            r#"{"actor_password":"Password123!"}"#,
+        ))
         .await
         .expect("route response");
 
@@ -701,7 +706,11 @@ async fn company_admin_cannot_create_update_or_delete_users() {
             format!("/api/admin/users/{target_id}"),
             r#"{"roles":["super_admin"]}"#,
         ),
-        ("DELETE", format!("/api/admin/users/{target_id}"), ""),
+        (
+            "DELETE",
+            format!("/api/admin/users/{target_id}"),
+            r#"{"actor_password":"Password123!"}"#,
+        ),
     ] {
         let response = app
             .clone()
@@ -862,6 +871,7 @@ async fn downloading_an_upload_requires_authentication() {
             Request::builder()
                 .method("GET")
                 .uri("/api/uploads/whatever.pdf")
+                .header("x-forwarded-for", "127.0.0.1")
                 .body(Body::empty())
                 .expect("build request"),
         )
@@ -1413,6 +1423,13 @@ async fn deleting_active_company_preserves_super_admin_session_and_rotates_token
     let company_a = seed_company(&pool).await;
     let company_b = seed_company(&pool).await;
     let (super_token, super_id) = token_and_user_for(&pool, company_a, "super_admin").await;
+    let step_up_hash = bcrypt::hash("StepUpPass123!", 4).expect("hash password");
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&step_up_hash)
+        .bind(super_id)
+        .execute(&pool)
+        .await
+        .expect("set password hash");
     crate::repositories::user_companies::insert(&pool, super_id, company_b)
         .await
         .expect("link second company");
@@ -1424,7 +1441,7 @@ async fn deleting_active_company_preserves_super_admin_session_and_rotates_token
             "DELETE",
             &format!("/api/admin/companies/{company_a}"),
             &super_token,
-            "",
+            r#"{"actor_password":"StepUpPass123!"}"#,
         ))
         .await
         .expect("delete company response");

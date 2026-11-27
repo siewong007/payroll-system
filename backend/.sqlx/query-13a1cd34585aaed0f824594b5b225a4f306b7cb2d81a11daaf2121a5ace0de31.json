@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n            SELECT 1 FROM overtime_applications\n            WHERE employee_id = $1\n              AND ot_date = $2\n              AND ot_type = 'public_holiday'\n              AND status IN ('approved', 'processed')\n              AND id <> $3\n        ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "13a1cd34585aaed0f824594b5b225a4f306b7cb2d81a11daaf2121a5ace0de31"
+}

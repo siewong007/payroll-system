@@ -61,6 +61,8 @@ function authContextValue(overrides: Partial<AuthContextType['user']> = {}): Aut
 describe('AttendanceScanPage under StrictMode', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
+    window.history.replaceState(null, '', '/');
     vi.mocked(getAttendanceMethod).mockResolvedValue({
       method: 'qr_code',
       geofence_mode: 'none',
@@ -91,7 +93,7 @@ describe('AttendanceScanPage under StrictMode', () => {
       <StrictMode>
         <QueryClientProvider client={qc}>
           <AuthContext.Provider value={authContextValue()}>
-            <MemoryRouter initialEntries={['/attendance/scan?token=qr-strict-123']}>
+            <MemoryRouter initialEntries={['/attendance/scan#token=qr-strict-123']}>
               <AttendanceScanPage />
             </MemoryRouter>
           </AuthContext.Provider>
@@ -103,11 +105,38 @@ describe('AttendanceScanPage under StrictMode', () => {
       expect(checkInQr).toHaveBeenCalledWith('qr-strict-123', undefined, undefined);
     });
   });
+
+  it('stores fragment token in sessionStorage when unauthenticated without leaking it in login redirect', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    window.history.replaceState(null, '', '/attendance/scan#token=qr-anon-secret');
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthContext.Provider
+          value={{ ...authContextValue(), user: null, token: null, isAuthenticated: false }}
+        >
+          <MemoryRouter initialEntries={['/attendance/scan#token=qr-anon-secret']}>
+            <AttendanceScanPage />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(
+        '/login?redirect=%2Fattendance%2Fscan',
+        { replace: true },
+      );
+    });
+    expect(sessionStorage.getItem('pending_attendance_qr_token')).toBe('qr-anon-secret');
+    expect(window.location.hash).toBe('');
+  });
 });
 
 describe('Notifications filter & permission-aware routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
+    window.history.replaceState(null, '', '/');
     vi.mocked(markAsRead).mockResolvedValue({ ok: true });
     vi.mocked(getNotificationCount).mockResolvedValue({ unread: 2, total: 2 });
     vi.mocked(getNotifications).mockResolvedValue([

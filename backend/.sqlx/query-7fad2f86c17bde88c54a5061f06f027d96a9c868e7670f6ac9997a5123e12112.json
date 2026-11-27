@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE overtime_applications oa\n           SET status = 'processed',\n               payroll_run_id = pe.payroll_run_id\n           FROM payroll_entries pe\n           WHERE oa.company_id = $1\n             AND pe.company_id = oa.company_id\n             AND pe.overtime_application_id = oa.id\n             AND pe.is_processed = TRUE\n             AND pe.payroll_run_id IS NOT NULL\n             AND oa.status = 'approved'\n             AND oa.payroll_run_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7fad2f86c17bde88c54a5061f06f027d96a9c868e7670f6ac9997a5123e12112"
+}

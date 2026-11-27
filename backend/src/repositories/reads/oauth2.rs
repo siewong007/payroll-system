@@ -17,7 +17,8 @@ pub async fn find_user_by_oauth2(
         User,
         r#"SELECT u.id, u.email, u.password_hash, u.full_name, u.roles, u.company_id,
             u.employee_id, u.is_active, u.must_change_password, u.last_login, u.created_at, u.updated_at,
-            u.failed_login_attempts, u.login_locked_until
+            u.failed_login_attempts, u.login_locked_until,
+            u.step_up_failed_attempts, u.step_up_locked_until
         FROM users u
         JOIN oauth2_accounts oa ON u.id = oa.user_id
         WHERE oa.provider = $1 AND oa.provider_user_id = $2 AND u.is_active = TRUE AND u.deleted_at IS NULL"#,

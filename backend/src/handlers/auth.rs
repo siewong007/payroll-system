@@ -20,8 +20,42 @@ use crate::models::user::{
 };
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
 use crate::services::{
-    auth_service, email_service, password_reset_service, session_service, user_service,
+    auth_service, email_service, password_reset_service, session_service, totp_service,
+    user_service,
 };
+
+/// Verify step-up credentials (current password + optional TOTP/backup code
+/// when 2FA is enabled) for the caller's live session. Enforces per-account
+/// lockout in `auth_service::verify_user_password_for_session` and returns
+/// `400`/`429` (never `401`) so Axios's 401 refresh interceptor is never tripped.
+pub(crate) async fn require_step_up(
+    state: &AppState,
+    auth: &AuthUser,
+    actor_password: Option<&str>,
+    actor_totp_code: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<crate::models::user::User> {
+    let password = actor_password
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("Current password confirmation is required".into()))?;
+    let user = auth_service::verify_user_password_for_session(
+        &state.pool,
+        auth.0.sub,
+        Some(auth.0.sid),
+        password,
+        audit_meta,
+    )
+    .await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        actor_totp_code,
+        &state.config.totp_encryption_key,
+        audit_meta,
+    )
+    .await?;
+    Ok(user)
+}
 
 /// Turns a `LoginOutcome` into its HTTP response: a full session (JWT body +
 /// httpOnly refresh cookie) when 2FA isn't required, or a small JSON marker
@@ -181,7 +215,7 @@ pub async fn refresh_token(
     audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
     cookie::validate_cookie_csrf_origin(&headers, &state.config.frontend_url)?;
-    let refresh = cookie::extract_refresh_token(&headers)
+    let refresh = cookie::extract_refresh_token(&headers, &state.config.frontend_url)
         .ok_or_else(|| AppError::Unauthorized("No refresh token".into()))?;
 
     let ip_address = audit_meta.ip_address.as_deref();
@@ -208,20 +242,21 @@ pub async fn refresh_token(
     Ok((resp_headers, Json(body)))
 }
 
-/// Logout: revoke the refresh token and clear the cookie.
+/// Logout: revoke the refresh token, revoke any distinct Bearer JWT session,
+/// and clear both refresh and OAuth2 state binder cookies.
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
     audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
     cookie::validate_cookie_csrf_origin(&headers, &state.config.frontend_url)?;
-    let mut revoked = false;
-    if let Some(refresh) = cookie::extract_refresh_token(&headers) {
+    let mut cookie_revoked: Option<(uuid::Uuid, uuid::Uuid)> = None;
+    if let Some(refresh) = cookie::extract_refresh_token(&headers, &state.config.frontend_url) {
         if let Ok((user_id, session_id)) =
             session_service::verify_refresh_token(&state.pool, &refresh).await
         {
             let _ = session_service::revoke_session(&state.pool, user_id, session_id).await;
-            revoked = true;
+            cookie_revoked = Some((user_id, session_id));
             // Best-effort, after the revocation: the logout itself must not
             // fail because its trail row could not be written, but the row
             // still answers "when did this account sign out".
@@ -245,15 +280,15 @@ pub async fn logout(
         }
     }
 
-    // Fallback when refresh cookie is missing or was already rotated by another
-    // tab: revoke the Bearer JWT's session directly so logout never leaves an
-    // active session usable until token expiry.
-    if !revoked
-        && let Some(token) = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
+    // Always inspect the Bearer JWT's session even when a refresh cookie was
+    // revoked: a tossed cookie for a sibling session must not prevent revoking
+    // the caller's actual active session.
+    if let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
         && let Ok(claims) = verify_token(token, &state.config.jwt_secret)
+        && cookie_revoked != Some((claims.sub, claims.sid))
     {
         let _ = session_service::revoke_session(&state.pool, claims.sub, claims.sid).await;
         let _ = crate::services::audit_service::log_action_with_metadata(
@@ -272,8 +307,14 @@ pub async fn logout(
     }
 
     let mut resp_headers = HeaderMap::new();
-    let (name, value) = cookie::clear_refresh_cookie(&state.config.frontend_url);
-    resp_headers.insert(name, value.parse().unwrap());
+    for (name, value) in cookie::clear_refresh_cookie_headers(&state.config.frontend_url)
+        .into_iter()
+        .chain(cookie::clear_oauth_state_cookie_headers(
+            &state.config.frontend_url,
+        ))
+    {
+        resp_headers.append(name, value.parse().unwrap());
+    }
 
     Ok((resp_headers, Json(serde_json::json!({ "ok": true }))))
 }
@@ -400,9 +441,10 @@ pub async fn change_password(
     audit_meta: AuditRequestMeta,
     Json(req): Json<ChangePasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth_service::change_password(
+    auth_service::change_password_for_session(
         &state.pool,
         auth.0.sub,
+        Some(auth.0.sid),
         &req.current_password,
         &req.new_password,
         req.totp_code.as_deref(),

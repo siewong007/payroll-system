@@ -14,6 +14,13 @@ use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::services::{portal_service, upload_service};
 
+/// Per-company total upload storage quota (1 GiB).
+const MAX_COMPANY_UPLOAD_BYTES: i64 = 1024 * 1024 * 1024;
+/// Maximum unreferenced uploads per user.
+const MAX_USER_UNREFERENCED_FILES: i64 = 25;
+/// Maximum total unreferenced upload bytes per user (50 MiB).
+const MAX_USER_UNREFERENCED_BYTES: i64 = 50 * 1024 * 1024;
+
 /// Request ceiling for `/api/uploads`: 10 MiB file + 1 MiB multipart slack.
 pub const UPLOAD_REQUEST_MAX_BYTES: usize = upload_service::MAX_UPLOAD_SIZE + 1024 * 1024;
 
@@ -282,6 +289,31 @@ pub async fn upload_file(
     // archive that would have been refused at this door.
     upload_service::validate_upload_bytes(&original_name, &data)?;
 
+    let file_len = data.len() as i64;
+    let (unref_count, unref_bytes) = crate::repositories::uploaded_files::user_unreferenced_stats(
+        &state.pool,
+        company_id,
+        auth.0.sub,
+    )
+    .await?;
+    if unref_count >= MAX_USER_UNREFERENCED_FILES
+        || unref_bytes.saturating_add(file_len) > MAX_USER_UNREFERENCED_BYTES
+    {
+        return Err(AppError::BadRequest(
+            "You have reached your pending upload quota. Attach or remove unused uploads before uploading more."
+                .into(),
+        ));
+    }
+
+    let company_bytes =
+        crate::repositories::uploaded_files::company_total_bytes(&state.pool, company_id).await?;
+    if company_bytes.saturating_add(file_len) > MAX_COMPANY_UPLOAD_BYTES {
+        return Err(AppError::BadRequest(
+            "Company upload storage quota has been reached. Remove unused documents or contact support."
+                .into(),
+        ));
+    }
+
     // Save to uploads directory
     tokio::fs::create_dir_all(upload_path::UPLOAD_DIR)
         .await
@@ -307,6 +339,7 @@ pub async fn upload_file(
         &stored_name,
         company_id,
         Some(auth.0.sub),
+        file_len,
     )
     .await
     {
@@ -474,7 +507,7 @@ pub async fn export_leave_ics(
 
     ics.push_str("END:VCALENDAR\r\n");
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/calendar; charset=utf-8")
         .header(
@@ -482,7 +515,7 @@ pub async fn export_leave_ics(
             format!("attachment; filename=\"leave-{}.ics\"", year),
         )
         .body(Body::from(ics))
-        .unwrap())
+        .map_err(|e| AppError::Internal(format!("Response error: {e}")))
 }
 
 // ─── Payslip PDF Download ───
@@ -500,7 +533,7 @@ pub async fn download_payslip_pdf(
         crate::services::payslip_pdf_service::generate_payslip_pdf(&state.pool, id, employee_id)
             .await?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/pdf")
         .header(
@@ -508,7 +541,7 @@ pub async fn download_payslip_pdf(
             "attachment; filename=\"payslip.pdf\"",
         )
         .body(Body::from(bytes))
-        .unwrap())
+        .map_err(|e| AppError::Internal(format!("Response error: {e}")))
 }
 
 fn sanitize_filename(name: &str) -> String {

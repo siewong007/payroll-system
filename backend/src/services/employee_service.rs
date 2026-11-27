@@ -383,6 +383,12 @@ fn update_touches_self_restricted_fields(req: &UpdateEmployeeRequest, existing: 
     let changing_active = req.is_active.is_some_and(|a| Some(a) != existing.is_active);
     changing_email
         || changing_active
+        || req.date_of_birth.is_some()
+        || req.residency_status.is_some()
+        || req.marital_status.is_some()
+        || req.date_resigned.is_some()
+        || req.clear_date_resigned == Some(true)
+        || req.employment_type.is_some()
         || req.basic_salary.is_some()
         || req.hourly_rate.is_some()
         || req.daily_rate.is_some()

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -30,13 +30,43 @@ type State =
   | 'error'
   | 'no-token';
 
+const PENDING_QR_TOKEN_KEY = 'pending_attendance_qr_token';
+
+function extractTokenParam(raw: string): string | null {
+  const trimmed = raw.replace(/^[?#]/, '');
+  if (!trimmed) return null;
+  const val = new URLSearchParams(trimmed).get('token')?.trim();
+  return val || null;
+}
+
+function readInitialScanToken(locationHash: string, locationSearch: string): string | null {
+  const hashToken =
+    extractTokenParam(typeof window !== 'undefined' ? window.location.hash : '') ??
+    extractTokenParam(locationHash);
+  if (hashToken) return hashToken;
+
+  const queryToken =
+    extractTokenParam(typeof window !== 'undefined' ? window.location.search : '') ??
+    extractTokenParam(locationSearch);
+  if (queryToken) return queryToken;
+
+  try {
+    const stored = sessionStorage.getItem(PENDING_QR_TOKEN_KEY)?.trim();
+    return stored || null;
+  } catch {
+    return null;
+  }
+}
+
 export function AttendanceScanPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
-  const token = searchParams.get('token');
+  const [token] = useState<string | null>(() =>
+    readInitialScanToken(location.hash, location.search),
+  );
 
   const [state, setState] = useState<State>(token ? 'authenticating' : 'no-token');
   const [error, setError] = useState('');
@@ -61,14 +91,25 @@ export function AttendanceScanPage() {
       setState('no-token');
       return;
     }
+    if (
+      typeof window !== 'undefined' &&
+      (extractTokenParam(window.location.hash) || extractTokenParam(window.location.search))
+    ) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
     if (authLoading) {
       setState('authenticating');
       return;
     }
 
     if (!isAuthenticated) {
-      // Redirect to login, come back here after
-      navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`, { replace: true });
+      // Preserve token in sessionStorage rather than leaking it in /login?redirect= query string
+      try {
+        sessionStorage.setItem(PENDING_QR_TOKEN_KEY, token);
+      } catch {
+        // Ignore storage restrictions
+      }
+      navigate(`/login?redirect=${encodeURIComponent('/attendance/scan')}`, { replace: true });
       return;
     }
 
@@ -109,6 +150,11 @@ export function AttendanceScanPage() {
         try {
           const result = await checkInQr(token, geo.coords?.latitude, geo.coords?.longitude);
           if (cancelled) return;
+          try {
+            sessionStorage.removeItem(PENDING_QR_TOKEN_KEY);
+          } catch {
+            // Ignore storage restrictions
+          }
           setRecord(result);
           setState('success');
           void queryClient.invalidateQueries({ queryKey: ['attendance-today'] });
@@ -122,6 +168,11 @@ export function AttendanceScanPage() {
 
           switch (classifyCheckInError(raw ?? message)) {
             case 'already-checked-in':
+              try {
+                sessionStorage.removeItem(PENDING_QR_TOKEN_KEY);
+              } catch {
+                // Ignore
+              }
               setState('already-checked-in');
               void queryClient.invalidateQueries({ queryKey: ['attendance-today'] });
               void queryClient.invalidateQueries({ queryKey: ['attendance-my'] });
@@ -133,6 +184,11 @@ export function AttendanceScanPage() {
               setState('offsite-network');
               break;
             case 'expired-code':
+              try {
+                sessionStorage.removeItem(PENDING_QR_TOKEN_KEY);
+              } catch {
+                // Ignore
+              }
               setState('expired-code');
               break;
             case 'stale-session':

@@ -43,7 +43,13 @@ vi.mock('axios', () => ({
   },
 }));
 
-import { getAccessToken, isSessionInvalid, setAccessToken } from '../api/client';
+import {
+  getAccessToken,
+  isSessionInvalid,
+  onAuthIdentityChanged,
+  setAccessToken,
+  setAuthIdentity,
+} from '../api/client';
 
 const requestHandler = axiosMocks.requestUse.mock.calls[0][0] as RequestHandler;
 const responseHandler = axiosMocks.responseUse.mock.calls[0][0] as ResponseHandler;
@@ -243,5 +249,34 @@ describe('API client', () => {
     await expect(responseErrorHandler(rateLimited)).rejects.toBe(rateLimited);
     expect('rateLimitMessage' in rateLimited).toBe(false);
     expect(axiosMocks.post).not.toHaveBeenCalled();
+  });
+
+  it('aborts request replay and signals identity change when silent refresh switches user or company', async () => {
+    setAccessToken('old-token');
+    setAuthIdentity(refreshedUser);
+    const identityListener = vi.fn();
+    const unsub = onAuthIdentityChanged(identityListener);
+    const otherUser = { ...refreshedUser, id: 'user-2', company_id: 'company-2' };
+    axiosMocks.post.mockResolvedValueOnce({
+      data: { token: 'user-2-token', user: otherUser },
+    });
+
+    const firstError = unauthorized('/portal/payslips');
+    const secondError = unauthorized('/employees');
+
+    try {
+      await expect(Promise.allSettled([
+        responseErrorHandler(firstError),
+        responseErrorHandler(secondError),
+      ])).resolves.toEqual([
+        expect.objectContaining({ status: 'rejected' }),
+        expect.objectContaining({ status: 'rejected' }),
+      ]);
+      expect(axiosMocks.apiInstance).not.toHaveBeenCalled();
+      expect(identityListener).toHaveBeenCalledWith(otherUser);
+      expect(getAccessToken()).toBe('user-2-token');
+    } finally {
+      unsub();
+    }
   });
 });

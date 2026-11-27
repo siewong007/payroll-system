@@ -77,10 +77,11 @@ const BARE_TOKEN = /^[0-9a-f]{16,}$/i;
 /**
  * Pull the attendance token out of a scanned payload.
  *
- * The kiosk encodes an absolute `…/attendance/scan?token=<hex>` URL, but a
- * bare token is accepted too so the manual-entry fallback can reuse this. The
- * token itself is not validated beyond "looks like one" — the server is the
- * authority on whether it is live, revoked or from another company.
+ * The kiosk encodes an absolute `…/attendance/scan#token=<hex>` URL (with
+ * legacy fallback to `?token=<hex>`), and a bare token is accepted too so the
+ * manual-entry fallback can reuse this. The token itself is not validated beyond
+ * "looks like one" — the server is the authority on whether it is live, revoked
+ * or from another company.
  */
 export function parseScanToken(decoded: string): { token: string } | { error: string } {
   const raw = decoded.trim();
@@ -89,8 +90,11 @@ export function parseScanToken(decoded: string): { token: string } | { error: st
   if (BARE_TOKEN.test(raw)) return { token: raw };
 
   try {
-    const token = new URL(raw).searchParams.get('token')?.trim();
-    if (token) return { token };
+    const parsed = new URL(raw);
+    const fragmentToken = new URLSearchParams(parsed.hash.replace(/^#/, '')).get('token')?.trim();
+    if (fragmentToken) return { token: fragmentToken };
+    const queryToken = parsed.searchParams.get('token')?.trim();
+    if (queryToken) return { token: queryToken };
     return { error: i18n.t('attendance.qr.notAttendance') };
   } catch {
     return { error: i18n.t('attendance.qr.invalid') };

@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { User, LoginResponse, MfaRequiredResponse } from '@/types';
-import api, { onAuthRefreshed, setAccessToken } from '@/api/client';
+import api, { onAuthIdentityChanged, onAuthRefreshed, setAccessToken, setAuthIdentity } from '@/api/client';
 import { deletePushSubscription } from '@/api/notifications';
 import { verifyTwoFactorLogin } from '@/api/totp';
 import { getCurrentPushEndpoint, unsubscribeFromPush, updateAppBadge } from '@/lib/pwa';
@@ -16,13 +16,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const queryClient = useQueryClient();
+  const identityRef = useRef<{ id: string; companyId: string | null } | null>(null);
 
   useEffect(() => {
-    return onAuthRefreshed((newToken, newUser) => {
+    identityRef.current = user ? { id: user.id, companyId: user.company_id } : null;
+  }, [user]);
+
+  useEffect(() => {
+    const unsubRefresh = onAuthRefreshed((newToken, newUser) => {
       setToken(newToken);
       setUser(newUser);
     });
-  }, []);
+    const unsubIdentity = onAuthIdentityChanged((nextUser) => {
+      void queryClient.cancelQueries();
+      queryClient.clear();
+      setUser(nextUser);
+    });
+    return () => {
+      unsubRefresh();
+      unsubIdentity();
+    };
+  }, [queryClient]);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== 'user') return;
+
+      if (!event.newValue) {
+        void queryClient.cancelQueries();
+        queryClient.clear();
+        setAccessToken(null);
+        setAuthIdentity(null);
+        setToken(null);
+        setUser(null);
+        try {
+          sessionStorage.clear();
+        } catch {
+          // Ignore storage restrictions
+        }
+        return;
+      }
+
+      try {
+        const nextUser = JSON.parse(event.newValue) as User;
+        if (!nextUser || typeof nextUser.id !== 'string') return;
+        const current = identityRef.current;
+        if (!current || current.id !== nextUser.id || current.companyId !== nextUser.company_id) {
+          void queryClient.cancelQueries();
+          queryClient.clear();
+          setAccessToken(null);
+          setAuthIdentity(nextUser);
+          setToken(null);
+          setUser(nextUser);
+          void api
+            .post<LoginResponse>('/auth/refresh', {})
+            .then(({ data }) => {
+              setAccessToken(data.token);
+              setAuthIdentity(data.user);
+              setToken(data.token);
+              setUser(data.user);
+              localStorage.setItem('user', JSON.stringify(data.user));
+            })
+            .catch(() => {
+              setAccessToken(null);
+              setAuthIdentity(null);
+              setToken(null);
+              setUser(null);
+              localStorage.removeItem('user');
+            });
+        }
+      } catch {
+        // Ignore malformed cross-tab user payload
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [queryClient]);
 
   // On mount, try to restore session via cookie-based refresh.
   // Skip on public kiosk tablet routes so they don't churn /auth/refresh.
@@ -36,12 +106,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Refresh token is sent automatically via httpOnly cookie
         const { data } = await api.post<LoginResponse>('/auth/refresh', {});
         setAccessToken(data.token);
+        setAuthIdentity(data.user);
         setToken(data.token);
         setUser(data.user);
         localStorage.setItem('user', JSON.stringify(data.user));
       } catch {
         // No valid session — user needs to log in
         setAccessToken(null);
+        setAuthIdentity(null);
         setToken(null);
         setUser(null);
         localStorage.removeItem('user');
@@ -57,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (newToken: string, newUser: User) => {
       queryClient.clear();
       setAccessToken(newToken);
+      setAuthIdentity(newUser);
       setToken(newToken);
       setUser(newUser);
       localStorage.setItem('user', JSON.stringify(newUser));
@@ -108,11 +181,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       // Server reads refresh token from cookie and revokes it
-      await api.post('/auth/logout');
+      await api.post('/auth/logout', {});
     } catch {
       // Ignore errors on logout — still clear local state
     }
     setAccessToken(null);
+    setAuthIdentity(null);
     setToken(null);
     setUser(null);
     localStorage.removeItem('user');
@@ -123,13 +197,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchCompany = useCallback(
     async (companyId: string) => {
       const { data } = await api.put<LoginResponse>('/auth/switch-company', { company_id: companyId });
-      await queryClient.cancelQueries();
-      queryClient.removeQueries();
-      await queryClient.invalidateQueries({ refetchType: 'none' });
       setAccessToken(data.token);
+      setAuthIdentity(data.user);
       setToken(data.token);
       setUser(data.user);
       localStorage.setItem('user', JSON.stringify(data.user));
+      await queryClient.cancelQueries();
+      queryClient.removeQueries();
+      await queryClient.invalidateQueries({ refetchType: 'none' });
     },
     [queryClient],
   );

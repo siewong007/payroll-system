@@ -144,7 +144,7 @@ pub async fn delete_run(
         ));
     }
 
-    payroll_entries::revert_for_run(&mut *tx, id, company_id, actor_id).await?;
+    payroll_entries::revert_for_run(&mut *tx, id, company_id).await?;
     claims::revert_for_run(&mut *tx, id, company_id).await?;
     overtime_applications::revert_for_run(&mut *tx, id, company_id).await?;
     payroll_item_details::delete_for_run(&mut *tx, id).await?;
@@ -251,8 +251,12 @@ pub async fn update_item_pcb(
     }
 
     let old_pcb = current.pcb_amount;
-    let delta = pcb_amount - old_pcb;
-    let new_total_deductions = current.total_deductions + delta;
+    let delta = pcb_amount
+        .checked_sub(old_pcb)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow in PCB delta".into()))?;
+    let new_total_deductions = current.total_deductions.checked_add(delta).ok_or_else(|| {
+        AppError::BadRequest("Payroll calculation overflow in total deductions".into())
+    })?;
     let new_net_salary = current.net_salary - delta;
     let new_ytd_pcb = current.ytd_pcb + delta;
     let new_ytd_net = current.ytd_net - delta;

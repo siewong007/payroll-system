@@ -155,6 +155,8 @@ pub struct PayrollEntry {
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
+    #[serde(skip_serializing, default)]
+    pub editor_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

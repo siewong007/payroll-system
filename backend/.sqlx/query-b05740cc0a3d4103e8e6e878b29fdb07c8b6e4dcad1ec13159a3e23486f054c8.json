@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE overtime_applications oa\n           SET status = 'processed',\n               payroll_run_id = match_run.payroll_run_id\n           FROM (\n               SELECT DISTINCT ON (oa2.id)\n                      oa2.id AS ot_id,\n                      pr.id AS payroll_run_id\n               FROM overtime_applications oa2\n               JOIN payroll_items pi ON pi.employee_id = oa2.employee_id\n               JOIN payroll_runs pr ON pr.id = pi.payroll_run_id\n               WHERE oa2.company_id = $1\n                 AND oa2.status = 'approved'\n                 AND oa2.payroll_run_id IS NULL\n                 AND pr.company_id = $1\n                 AND pr.status IN ('processing', 'processed', 'pending_approval', 'approved', 'paid')\n                 AND oa2.ot_date BETWEEN pr.period_start AND pr.period_end\n               ORDER BY oa2.id, pr.period_start DESC, pr.created_at DESC\n           ) AS match_run\n           WHERE oa.id = match_run.ot_id\n             AND oa.company_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b05740cc0a3d4103e8e6e878b29fdb07c8b6e4dcad1ec13159a3e23486f054c8"
+}

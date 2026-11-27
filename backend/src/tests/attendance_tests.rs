@@ -1356,11 +1356,11 @@ async fn a_sixty_day_correction_is_refused_before_the_write() {
     let (company_id, employee_id) = seed_company_and_employee(&pool).await;
     let admin = seed_user(&pool, company_id, "hr_manager").await;
 
-    let record_id = insert_open_record(&pool, company_id, employee_id, 2).await;
+    let record_id = insert_open_record(&pool, company_id, employee_id, 61 * 24).await;
 
     let req = UpdateAttendanceRecordRequest {
         check_in_at: None,
-        check_out_at: Some(chrono::Utc::now() + Duration::days(60)),
+        check_out_at: Some(chrono::Utc::now() - Duration::days(1)),
         status: None,
         notes: None,
         clear_check_out: None,

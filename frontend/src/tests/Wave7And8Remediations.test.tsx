@@ -226,7 +226,14 @@ describe('UserGroups member management', () => {
     expect(within(dialog).getByText('Farah Ali')).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: 'Add Hafiz Noor' }));
-    await waitFor(() => expect(userGroupsMocks.addMember).toHaveBeenCalledWith('g-1', 'u-2'));
+    const stepUpDialog = await screen.findByRole('dialog', { name: 'Confirm Add Group Member' });
+    await user.type(within(stepUpDialog).getByLabelText(/confirm with your password/i), 'SuperSecret123!');
+    await user.click(within(stepUpDialog).getByRole('button', { name: 'Add' }));
+    await waitFor(() =>
+      expect(userGroupsMocks.addMember).toHaveBeenCalledWith('g-1', 'u-2', {
+        actor_password: 'SuperSecret123!',
+      }),
+    );
 
     const removeBtn = await within(dialog).findByRole('button', { name: 'Remove Hafiz Noor' });
     await user.click(removeBtn);
@@ -289,8 +296,13 @@ describe('BackupPage preview and overwrite guard', () => {
     expect(importBtn).toBeEnabled();
 
     await user.click(importBtn);
+    const stepUpDialog = await screen.findByRole('dialog', { name: 'Confirm Backup Import' });
+    await user.type(within(stepUpDialog).getByLabelText(/confirm with your password/i), 'SuperSecret123!');
+    await user.click(within(stepUpDialog).getByRole('button', { name: 'Import Backup' }));
     await waitFor(() =>
-      expect(backupMocks.importCompanyBackup).toHaveBeenCalledWith(file, 'comp-1', false),
+      expect(backupMocks.importCompanyBackup).toHaveBeenCalledWith(file, 'comp-1', false, {
+        actor_password: 'SuperSecret123!',
+      }),
     );
   });
 });

@@ -102,10 +102,12 @@ fn sanitize_header_text(s: &str) -> String {
 }
 
 /// Sanitize user-authored HTML email templates/bodies via `ammonia`, stripping
-/// scripts, event handlers, forms, iframes, stylesheets, and unsafe URI schemes
-/// while preserving standard semantic formatting and `https`/`http`/`mailto` links.
+/// scripts, event handlers, forms, iframes, `<img>` tags (preventing remote
+/// tracking pixels/IP leaks), stylesheets, and unsafe URI schemes while preserving
+/// standard semantic formatting and `https`/`http`/`mailto` links.
 pub fn sanitize_email_html(html: &str) -> String {
     let mut builder = ammonia::Builder::default();
+    builder.rm_tags(["img"]);
     builder.url_schemes(std::collections::HashSet::from(["https", "http", "mailto"]));
     builder.clean(html).to_string()
 }
@@ -222,11 +224,15 @@ fn mailbox(name: &str, email: &str) -> Result<Mailbox, AddressError> {
 /// than between the insert and the send. Only called once `smtp_enabled()` has
 /// answered true, but it reads the config defensively so a half-configured
 /// deployment produces a 500 with a message rather than a panic.
+/// Maximum concurrent in-flight SMTP send operations per API instance.
+const MAX_CONCURRENT_SMTP_SENDS: usize = 6;
+
 fn build_transport(config: &AppConfig) -> AppResult<AsyncSmtpTransport<Tokio1Executor>> {
     let smtp_host = config.smtp_host.as_deref().unwrap_or_default();
     let mut builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host)
         .map_err(|e| AppError::Internal(format!("SMTP connection error: {}", e)))?
-        .port(config.smtp_port.unwrap_or(587));
+        .port(config.smtp_port.unwrap_or(587))
+        .timeout(Some(std::time::Duration::from_secs(15)));
 
     if let (Some(user), Some(pass)) = (&config.smtp_username, &config.smtp_password) {
         builder = builder.credentials(Credentials::new(user.clone(), pass.clone()));
@@ -248,6 +254,7 @@ fn from_mailbox(config: &AppConfig) -> AppResult<Mailbox> {
 struct MailerInner {
     transport: AsyncSmtpTransport<Tokio1Executor>,
     from: Mailbox,
+    semaphore: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 /// Shared, pooled SMTP transport built once at boot and cloned cheaply via
@@ -289,7 +296,13 @@ impl SharedMailer {
             }
         };
         Self {
-            inner: Some(MailerInner { transport, from }),
+            inner: Some(MailerInner {
+                transport,
+                from,
+                semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(
+                    MAX_CONCURRENT_SMTP_SENDS,
+                )),
+            }),
             init_error: None,
         }
     }
@@ -328,6 +341,11 @@ impl SharedMailer {
             .header(ContentType::TEXT_HTML)
             .body(body_html.to_string())
             .map_err(|e| format!("Failed to build email: {e}"))?;
+        let _permit = inner
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| "SMTP mailer semaphore closed".to_string())?;
         inner
             .transport
             .send(email)
@@ -980,6 +998,7 @@ mod tests {
         assert!(!cleaned.contains("onerror"));
         assert!(!cleaned.to_ascii_lowercase().contains("javascript:"));
         assert!(!cleaned.contains("<iframe"));
+        assert!(!cleaned.contains("<img"));
 
         assert!(cleaned.contains("<strong>Hello</strong>"));
         assert!(cleaned.contains("https://payrollmy.com"));

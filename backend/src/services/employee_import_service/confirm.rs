@@ -56,7 +56,12 @@ fn row_to_create_request(row: &ImportRowRaw) -> CreateEmployeeRequest {
             }
         }),
         marital_status: row.marital_status.as_ref().map(|s| s.to_lowercase()),
-        email: row.email.clone(),
+        email: row
+            .email
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
         phone: row.phone.clone(),
         address_line1: row.address_line1.clone(),
         address_line2: row.address_line2.clone(),

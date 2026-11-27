@@ -4,13 +4,15 @@
       "id": "RUSTSEC-2023-0071",
       "ecosystem": "cargo",
       "package": "rsa",
-      "reason": "Pulled into Cargo.lock only via uncompiled sqlx-mysql backend; crate enables only sqlx postgres feature.",
+      "compiled": true,
+      "reason": "Compiled via webauthn-rs 0.6.2 -> webauthn-rs-core -> crypto-glue 0.2.2 -> rsa 0.10.0-rc.19 for RSA public-key signature verification only (no RSA private-key decryption/signing; Marvin attack requires private-key operations). Track upstream webauthn-rs/rsa stable release.",
       "expires": "2026-12-31"
     },
     {
       "id": "RUSTSEC-2026-0459",
       "ecosystem": "cargo",
       "package": "libsqlite3-sys",
+      "compiled": false,
       "reason": "Pulled into Cargo.lock only via uncompiled sqlx-sqlite backend; crate enables only sqlx postgres feature.",
       "expires": "2026-12-31"
     },

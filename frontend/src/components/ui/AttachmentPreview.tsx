@@ -76,7 +76,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
 
   const { href } = file;
   const safeHref =
-    /^(?:https?:|blob:)/i.test(href) || href.startsWith('/api/uploads/') ? href : null;
+    /^(?:https:|blob:)/i.test(href) || href.startsWith('/api/uploads/') ? href : null;
   if (!safeHref) {
     return null;
   }
@@ -148,7 +148,7 @@ export function AttachmentLink({
   }
 
   if (!isManagedUploadUrl(url)) {
-    if (/^https?:\/\//i.test(url)) {
+    if (/^https:\/\//i.test(url)) {
       return (
         <a
           href={url}
@@ -168,19 +168,33 @@ export function AttachmentLink({
     e.stopPropagation();
     if (loading) return;
     setLoading(true);
-    // Open synchronously inside the click gesture so Safari/iOS don't block the tab.
-    const tab = window.open('', '_blank');
+    const isImage = isImageUrl(url);
+    // For safe raster images, open synchronously inside the click gesture so Safari/iOS don't block the tab.
+    // For non-image uploads (PDFs, documents), trigger a direct download instead of navigating to a same-origin blob: tab.
+    const tab = isImage ? window.open('', '_blank') : null;
     if (tab) {
       tab.opener = null;
     }
     try {
       const objectUrl = await fetchUploadObjectUrl(url);
-      if (tab && !tab.closed) {
-        tab.location.href = objectUrl;
+      if (isImage) {
+        if (tab && !tab.closed) {
+          tab.location.href = objectUrl;
+        } else {
+          const a = document.createElement('a');
+          a.href = objectUrl;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        }
       } else {
+        const cleanPath = url.split(/[?#]/, 1)[0];
+        const fallbackName = cleanPath.split('/').pop() || 'attachment';
         const a = document.createElement('a');
         a.href = objectUrl;
-        a.target = '_blank';
+        a.download = fallbackName;
         a.rel = 'noopener noreferrer';
         document.body.appendChild(a);
         a.click();

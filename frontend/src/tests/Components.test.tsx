@@ -93,10 +93,18 @@ describe('Modal', () => {
 });
 
 describe('AttachmentLink', () => {
-  it('does not fetch managed uploads on mount and fetches only when clicked', async () => {
+  it('does not fetch managed uploads on mount and downloads non-image blobs on click without opening a tab', async () => {
     const user = userEvent.setup();
-    const fakeTab = { opener: {} as unknown, closed: false, location: { href: '' }, close: vi.fn() };
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeTab as unknown as Window);
+    const realCreateElement = document.createElement.bind(document);
+    const anchor = realCreateElement('a');
+    const anchorClick = vi.fn();
+    anchor.click = anchorClick;
+    const createElementSpy = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation((tag: string) =>
+        tag === 'a' ? anchor : realCreateElement(tag as 'div'),
+      );
+    const openSpy = vi.spyOn(window, 'open');
     uploadMocks.fetchUploadObjectUrl.mockResolvedValue('blob:https://payrollmy.com/receipt-1');
 
     try {
@@ -109,8 +117,33 @@ describe('AttachmentLink', () => {
       await waitFor(() =>
         expect(uploadMocks.fetchUploadObjectUrl).toHaveBeenCalledWith('/api/uploads/receipt-1.pdf'),
       );
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(anchor.getAttribute('href')).toBe('blob:https://payrollmy.com/receipt-1');
+      expect(anchor.getAttribute('download')).toBe('receipt-1.pdf');
+      expect(anchorClick).toHaveBeenCalledOnce();
+    } finally {
+      createElementSpy.mockRestore();
+      openSpy.mockRestore();
+    }
+  });
+
+  it('opens safe raster image uploads in a new tab with opener severed', async () => {
+    const user = userEvent.setup();
+    const fakeTab = { opener: {} as unknown, closed: false, location: { href: '' }, close: vi.fn() };
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeTab as unknown as Window);
+    uploadMocks.fetchUploadObjectUrl.mockResolvedValue('blob:https://payrollmy.com/photo-1');
+
+    try {
+      render(<AttachmentLink url="/api/uploads/photo-1.png">View photo</AttachmentLink>);
+
+      await user.click(screen.getByRole('button', { name: 'View photo' }));
+
+      await waitFor(() =>
+        expect(uploadMocks.fetchUploadObjectUrl).toHaveBeenCalledWith('/api/uploads/photo-1.png'),
+      );
+      expect(openSpy).toHaveBeenCalledWith('', '_blank');
       expect(fakeTab.opener).toBeNull();
-      expect(fakeTab.location.href).toBe('blob:https://payrollmy.com/receipt-1');
+      expect(fakeTab.location.href).toBe('blob:https://payrollmy.com/photo-1');
     } finally {
       openSpy.mockRestore();
     }

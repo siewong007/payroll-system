@@ -1,5 +1,6 @@
 import api from '@/api/client';
 import type { PermissionKey } from '@/api/permissions';
+import type { StepUpCredentials } from '@/types';
 
 export interface UserGroupBase {
   id: string;
@@ -28,6 +29,8 @@ export interface CreateUserGroupRequest {
   name: string;
   description?: string;
   permissions: PermissionKey[];
+  actor_password?: string;
+  actor_totp_code?: string;
 }
 
 export interface UpdateUserGroupRequest {
@@ -36,6 +39,8 @@ export interface UpdateUserGroupRequest {
   is_active?: boolean;
   /** Omit to leave the permission set untouched; send to replace it wholesale. */
   permissions?: PermissionKey[];
+  actor_password?: string;
+  actor_totp_code?: string;
 }
 
 export const userGroupsApi = {
@@ -54,8 +59,8 @@ export const userGroupsApi = {
     return data;
   },
 
-  remove: async (id: string): Promise<void> => {
-    await api.delete(`/user-groups/${id}`);
+  remove: async (id: string, stepUp: StepUpCredentials): Promise<void> => {
+    await api.delete(`/user-groups/${id}`, { data: stepUp });
   },
 
   members: async (id: string): Promise<UserGroupMember[]> => {
@@ -63,8 +68,8 @@ export const userGroupsApi = {
     return data;
   },
 
-  addMember: async (id: string, userId: string): Promise<void> => {
-    await api.post(`/user-groups/${id}/members`, { user_id: userId });
+  addMember: async (id: string, userId: string, stepUp: StepUpCredentials): Promise<void> => {
+    await api.post(`/user-groups/${id}/members`, { user_id: userId, ...stepUp });
   },
 
   removeMember: async (id: string, userId: string): Promise<void> => {

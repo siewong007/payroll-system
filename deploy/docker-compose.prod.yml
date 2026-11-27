@@ -21,7 +21,7 @@ x-logging: &default-logging
 
 services:
   postgres:
-    image: postgres:19beta2
+    image: postgres:19beta2@sha256:70005d4e7503d0f3970cdc2ddd01a48a0427b85be30a757f873fdd4cd49aa98c
     container_name: payroll-db
     restart: unless-stopped
     command:
@@ -73,6 +73,14 @@ services:
     mem_limit: 256m
     cpus: 0.30
     pids_limit: 256
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 60s

@@ -25,8 +25,9 @@ pub async fn acquire_tax_year_lock(
     Ok(())
 }
 
-/// Whether any non-draft (`pending_approval`, `approved`, `paid`) payroll run
-/// covering `[start_date, end_date]` includes `employee_id`.
+/// Whether any non-draft (`processing`, `processed`, `pending_approval`,
+/// `approved`, `paid`) payroll run covering `[start_date, end_date]` includes
+/// `employee_id`.
 pub async fn has_non_draft_covering_dates(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -38,39 +39,7 @@ pub async fn has_non_draft_covering_dates(
         r#"SELECT EXISTS(
             SELECT 1 FROM payroll_runs pr
             WHERE pr.company_id = $1
-              AND pr.status IN ('pending_approval', 'approved', 'paid')
-              AND pr.period_start <= $4
-              AND pr.period_end >= $3
-              AND EXISTS (
-                  SELECT 1 FROM payroll_items pi
-                  WHERE pi.payroll_run_id = pr.id
-                    AND pi.employee_id = $2
-              )
-        ) AS "exists!""#,
-        company_id,
-        employee_id,
-        start_date,
-        end_date,
-    )
-    .fetch_one(executor)
-    .await?;
-    Ok(exists)
-}
-
-/// Whether any finalized (`paid`) payroll run covering `[start_date, end_date]`
-/// includes `employee_id`.
-pub async fn has_paid_covering_dates(
-    executor: impl Executor<'_, Database = Postgres>,
-    company_id: Uuid,
-    employee_id: Uuid,
-    start_date: NaiveDate,
-    end_date: NaiveDate,
-) -> AppResult<bool> {
-    let exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM payroll_runs pr
-            WHERE pr.company_id = $1
-              AND pr.status = 'paid'
+              AND pr.status IN ('processing', 'processed', 'pending_approval', 'approved', 'paid')
               AND pr.period_start <= $4
               AND pr.period_end >= $3
               AND EXISTS (

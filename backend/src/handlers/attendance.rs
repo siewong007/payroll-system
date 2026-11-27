@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
-use crate::core::extract::ClientIp;
+use crate::core::extract::{ClientIp, ValidatedJson};
 use crate::models::attendance::{
     AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
     AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
@@ -20,6 +20,7 @@ use crate::models::attendance::{
 use crate::models::attendance_kiosk::{
     CreateKioskCredentialRequest, CreateKioskCredentialResponse, KioskCredential,
 };
+use crate::models::user_company::StepUpConfirmRequest;
 use crate::services::{attendance_service, audit_service::AuditRequestMeta};
 
 // ─── Effective Method ───
@@ -60,6 +61,14 @@ pub async fn set_platform_method(
     Json(req): Json<SetAttendanceMethodRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManagePlatformSettings)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        req.actor_password.as_deref(),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
 
     attendance_service::set_platform_attendance_method(
         &state.pool,
@@ -468,6 +477,14 @@ pub async fn create_kiosk_credential(
 ) -> AppResult<Json<CreateKioskCredentialResponse>> {
     let company_id = auth.company_id()?;
     auth.require_permission(Permission::ManageKiosks)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        req.actor_password.as_deref(),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
 
     let (credential, secret) = attendance_service::create_kiosk_credential(
         &state.pool,
@@ -507,9 +524,18 @@ pub async fn revoke_kiosk_credential(
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<StepUpConfirmRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
     auth.require_permission(Permission::ManageKiosks)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.actor_password),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
 
     attendance_service::revoke_kiosk_credential(
         &state.pool,

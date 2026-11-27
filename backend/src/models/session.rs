@@ -94,6 +94,4 @@ pub struct ResetPasswordRequest {
 pub struct ValidateResetTokenRequest {
     #[validate(length(min = 1, message = "Token is required"))]
     pub token: String,
-    #[serde(default)]
-    pub turnstile_token: Option<String>,
 }

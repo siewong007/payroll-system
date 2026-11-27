@@ -16,7 +16,7 @@ use crate::models::oauth2::{
     OAuth2ProviderInfo, UnlinkOAuth2Request,
 };
 use crate::models::session::LoginOutcome;
-use crate::services::{audit_service, auth_service, oauth2_service, totp_service};
+use crate::services::{audit_service, auth_service, oauth2_service};
 
 /// List available OAuth2 providers and their status.
 pub async fn list_providers(
@@ -39,8 +39,9 @@ pub async fn list_providers(
 /// the remainder of its ten-minute TTL.
 fn oauth2_error_redirect(frontend_url: &str, message: &str) -> Response {
     let mut headers = HeaderMap::new();
-    let (name, value) = cookie::clear_oauth_state_cookie(frontend_url);
-    headers.insert(name, value.parse().unwrap());
+    for (name, value) in cookie::clear_oauth_state_cookie_headers(frontend_url) {
+        headers.append(name, value.parse().unwrap());
+    }
 
     (
         headers,
@@ -107,7 +108,7 @@ async fn google_callback_inner(
         .state
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("Missing OAuth2 state parameter".into()))?;
-    let binder = cookie::extract_oauth_state_binder(&headers);
+    let binder = cookie::extract_oauth_state_binder(&headers, &state.config.frontend_url);
 
     let code_verifier =
         oauth2_service::consume_oauth2_state(&state.pool, oauth_state, binder.as_deref()).await?;
@@ -220,8 +221,9 @@ async fn google_callback_inner(
 
     let mut headers = HeaderMap::new();
     // The flow is over either way, so the binder is spent.
-    let (name, value) = cookie::clear_oauth_state_cookie(&state.config.frontend_url);
-    headers.insert(name, value.parse().unwrap());
+    for (name, value) in cookie::clear_oauth_state_cookie_headers(&state.config.frontend_url) {
+        headers.append(name, value.parse().unwrap());
+    }
 
     let redirect_url = match outcome {
         LoginOutcome::Session(session) => {
@@ -336,13 +338,11 @@ pub async fn unlink_provider(
     Path(provider): Path<String>,
     ValidatedJson(body): ValidatedJson<UnlinkOAuth2Request>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth_service::verify_user_password(&state.pool, auth.0.sub, &body.password, Some(&audit_meta))
-        .await?;
-    totp_service::verify_step_up_if_enabled(
-        &state.pool,
-        auth.0.sub,
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&body.password),
         body.totp_code.as_deref(),
-        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await?;
@@ -372,24 +372,17 @@ pub async fn link_google(
     ValidatedJson(body): ValidatedJson<LinkGoogleRequest>,
 ) -> AppResult<Response> {
     let mut clear_headers = HeaderMap::new();
-    let (name, value) = cookie::clear_oauth_state_cookie(&state.config.frontend_url);
-    clear_headers.insert(name, value.parse().unwrap());
-
-    if let Err(err) = auth_service::verify_user_password(
-        &state.pool,
-        auth.0.sub,
-        &body.password,
-        Some(&audit_meta),
-    )
-    .await
-    {
-        return Ok((clear_headers, err.into_response()).into_response());
+    for (name, value) in cookie::clear_oauth_state_cookie_headers(&state.config.frontend_url) {
+        if let Ok(header_value) = value.parse() {
+            clear_headers.append(name, header_value);
+        }
     }
-    if let Err(err) = totp_service::verify_step_up_if_enabled(
-        &state.pool,
-        auth.0.sub,
+
+    if let Err(err) = crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&body.password),
         body.totp_code.as_deref(),
-        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await
@@ -412,7 +405,7 @@ pub async fn link_google(
     // without it, anyone holding a Google code could attach their own account
     // to a victim's session. The cookie path covers /api/auth/oauth2, so this
     // POST carries the binder just like the callback does.
-    let binder = cookie::extract_oauth_state_binder(&headers);
+    let binder = cookie::extract_oauth_state_binder(&headers, &state.config.frontend_url);
     let code_verifier =
         match oauth2_service::consume_oauth2_state(&state.pool, &body.state, binder.as_deref())
             .await

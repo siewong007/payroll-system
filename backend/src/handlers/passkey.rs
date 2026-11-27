@@ -14,12 +14,11 @@ use crate::core::extract::ValidatedJson;
 use crate::handlers::auth::login_outcome_response;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::passkey::{
-    AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
-    DeletePasskeyRequest, DiscoverableAuthBeginRequest, DiscoverableAuthBeginResponse, PasskeyInfo,
-    RegistrationBeginRequest, RegistrationBeginResponse, RegistrationCompleteRequest,
-    RenamePasskeyRequest,
+    AuthCompleteRequest, CheckPasskeyRequest, DeletePasskeyRequest, DiscoverableAuthBeginRequest,
+    DiscoverableAuthBeginResponse, PasskeyInfo, RegistrationBeginRequest,
+    RegistrationBeginResponse, RegistrationCompleteRequest, RenamePasskeyRequest,
 };
-use crate::services::{audit_service, auth_service, passkey_service, totp_service};
+use crate::services::{audit_service, auth_service, passkey_service};
 
 async fn log_passkey_login_failed(
     state: &AppState,
@@ -53,13 +52,11 @@ pub async fn registration_begin(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<RegistrationBeginRequest>,
 ) -> AppResult<Json<RegistrationBeginResponse>> {
-    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password, Some(&audit_meta))
-        .await?;
-    totp_service::verify_step_up_if_enabled(
-        &state.pool,
-        auth.0.sub,
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.password),
         req.totp_code.as_deref(),
-        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await?;
@@ -119,108 +116,6 @@ pub async fn registration_complete(
     Ok(Json(
         serde_json::json!({"message": "Passkey registered successfully"}),
     ))
-}
-
-// ── Authentication (unauthenticated user logs in with passkey) ─────────
-
-pub async fn authentication_begin(
-    State(state): State<AppState>,
-    audit_meta: AuditRequestMeta,
-    Json(req): Json<AuthBeginRequest>,
-) -> AppResult<Json<AuthBeginResponse>> {
-    crate::core::turnstile::verify_any_action(
-        &state.config,
-        req.turnstile_token.as_deref(),
-        audit_meta.ip_address.as_deref(),
-        &["login", "passkey_auth"],
-    )
-    .await?;
-
-    let user_id = passkey_service::get_user_id_by_email_with_passkeys(&state.pool, &req.email)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("Unable to start passkey sign-in".into()))?;
-
-    let passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
-
-    if passkeys.is_empty() {
-        return Err(AppError::BadRequest(
-            "Unable to start passkey sign-in".into(),
-        ));
-    }
-
-    let (rcr, auth_state) = state
-        .webauthn
-        .start_passkey_authentication(&passkeys)
-        .map_err(|e| AppError::Internal(format!("WebAuthn auth start failed: {}", e)))?;
-
-    let state_json = serde_json::to_value(&auth_state)
-        .map_err(|e| AppError::Internal(format!("Failed to serialize auth state: {}", e)))?;
-
-    let challenge_id = passkey_service::store_challenge(
-        &state.pool,
-        Some(user_id),
-        Some(&req.email),
-        "authentication",
-        &state_json,
-    )
-    .await?;
-
-    Ok(Json(AuthBeginResponse {
-        challenge_id,
-        options: rcr,
-    }))
-}
-
-pub async fn authentication_complete(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    audit_meta: AuditRequestMeta,
-    Json(req): Json<AuthCompleteRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    // Consume the challenge (which carries the target user_id)
-    let (user_id, state_json) =
-        passkey_service::take_authentication_challenge(&state.pool, req.challenge_id).await?;
-
-    let auth_state: PasskeyAuthentication = serde_json::from_value(state_json)
-        .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
-
-    let auth_result = match state
-        .webauthn
-        .finish_passkey_authentication(&req.credential, &auth_state)
-    {
-        Ok(res) => res,
-        Err(e) => {
-            log_passkey_login_failed(&state, Some(user_id), "invalid_assertion", &audit_meta).await;
-            return Err(AppError::Unauthorized(format!(
-                "Passkey authentication failed: {}",
-                e
-            )));
-        }
-    };
-
-    // Update credential counter (fail closed if the credential disappeared concurrently)
-    let passkeys = passkey_service::get_passkey_records_for_user(&state.pool, user_id).await?;
-    let (pk_id, _) = passkeys
-        .iter()
-        .find(|(_, pk)| pk.cred_id() == auth_result.cred_id())
-        .ok_or_else(|| AppError::Unauthorized("Passkey credential was removed".into()))?;
-    passkey_service::update_passkey_after_auth(&state.pool, *pk_id, user_id, &auth_result).await?;
-
-    // Issue tokens (same as password login, gated on 2FA if enabled)
-    let outcome = auth_service::complete_login(
-        &state.pool,
-        user_id,
-        &state.config.jwt_secret,
-        state.config.jwt_expiry_hours,
-        headers
-            .get("user-agent")
-            .and_then(|value| value.to_str().ok()),
-        "passkey",
-        Some(&audit_meta),
-    )
-    .await?;
-
-    Ok(login_outcome_response(outcome, &state.config.frontend_url))
 }
 
 // ── Discoverable Authentication (no email required) ─────────────────────
@@ -375,13 +270,11 @@ pub async fn delete_passkey(
     Path(id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<DeletePasskeyRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password, Some(&audit_meta))
-        .await?;
-    totp_service::verify_step_up_if_enabled(
-        &state.pool,
-        auth.0.sub,
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.password),
         req.totp_code.as_deref(),
-        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await?;

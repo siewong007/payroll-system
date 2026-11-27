@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users\n           SET step_up_failed_attempts = CASE\n                   WHEN step_up_locked_until IS NOT NULL AND step_up_locked_until <= NOW() THEN 1\n                   ELSE step_up_failed_attempts + 1\n               END,\n               step_up_locked_until = CASE\n                   WHEN step_up_locked_until IS NOT NULL AND step_up_locked_until <= NOW() THEN\n                       CASE WHEN 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute') ELSE NULL END\n                   WHEN step_up_failed_attempts + 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute')\n                   ELSE step_up_locked_until\n               END,\n               updated_at = NOW()\n           WHERE id = $1\n           RETURNING step_up_failed_attempts",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "step_up_failed_attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "step_up_failed_attempts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7c6dd0f18a2e8fa4b8f378782a00020817437e0bc8f08406a5a247a086a4a18a"
+}

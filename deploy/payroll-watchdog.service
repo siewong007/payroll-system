@@ -1,11 +1,12 @@
 [Unit]
 Description=Payroll operational readiness & disk watchdog
 Documentation=file:///opt/payroll/payroll-watchdog.sh
-Requires=docker.service
 After=docker.service
 
 [Service]
 Type=oneshot
+User=payroll-watchdog
+Group=payroll-watchdog
 ExecStart=/opt/payroll/payroll-watchdog.sh
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -18,7 +19,7 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-ReadWritePaths=/opt/payroll/logs
+ReadWritePaths=/opt/payroll/logs/watchdog
 PrivateTmp=yes
 
 [Install]

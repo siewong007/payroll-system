@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
-use crate::core::upload_path::validate_optional_file_url;
+use crate::core::upload_path::validate_optional_managed_upload_url;
 use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::repositories::reads::portal as portal_reads;
@@ -81,7 +81,7 @@ pub async fn create_leave_request(
 
     // `attachment_url` is joined onto a filesystem path by the backup export and
     // restore paths, so it is settled at write time rather than at every sink.
-    validate_optional_file_url(req.attachment_url.as_deref())?;
+    validate_optional_managed_upload_url(req.attachment_url.as_deref())?;
     crate::services::upload_service::ensure_upload_attach_authorized(
         pool,
         access,
@@ -212,7 +212,7 @@ pub async fn cancel_leave_request(
                 ));
             }
 
-            let deleted = payroll_entries::delete_unprocessed_unpaid_leave(
+            let _deleted = payroll_entries::delete_unprocessed_unpaid_leave(
                 &mut *tx,
                 lr.employee_id,
                 lr.company_id,
@@ -220,15 +220,14 @@ pub async fn cancel_leave_request(
                 &description,
             )
             .await?;
-            if deleted == 0
-                && payroll_entries::exists_processed_unpaid_leave(
-                    &mut *tx,
-                    lr.employee_id,
-                    lr.company_id,
-                    request_id,
-                    &description,
-                )
-                .await?
+            if payroll_entries::exists_processed_unpaid_leave(
+                &mut *tx,
+                lr.employee_id,
+                lr.company_id,
+                request_id,
+                &description,
+            )
+            .await?
             {
                 return Err(AppError::Conflict(
                     "Approved unpaid leave was processed by payroll while being cancelled.".into(),
@@ -307,8 +306,10 @@ pub async fn create_claim(
     req: CreateClaimRequest,
     access: &crate::models::upload::UploadAccess,
 ) -> AppResult<Claim> {
+    const MAX_DRAFT_CLAIMS_PER_EMPLOYEE: i64 = 25;
+
     crate::services::approval_service::ensure_positive_amount(req.amount)?;
-    validate_optional_file_url(req.receipt_url.as_deref())?;
+    validate_optional_managed_upload_url(req.receipt_url.as_deref())?;
     crate::services::upload_service::ensure_upload_attach_authorized(
         pool,
         access,
@@ -316,6 +317,14 @@ pub async fn create_claim(
         false,
     )
     .await?;
+
+    if claims::count_drafts_for_employee(pool, employee_id, company_id).await?
+        >= MAX_DRAFT_CLAIMS_PER_EMPLOYEE
+    {
+        return Err(AppError::BadRequest(format!(
+            "You already have the maximum of {MAX_DRAFT_CLAIMS_PER_EMPLOYEE} draft claims. Submit or delete an existing draft first."
+        )));
+    }
 
     let claim = claims::insert_draft(
         pool,

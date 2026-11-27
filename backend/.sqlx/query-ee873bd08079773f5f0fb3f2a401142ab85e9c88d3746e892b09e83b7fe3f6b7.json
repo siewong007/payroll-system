@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT lower(btrim(email)) AS \"email!\"\n           FROM users\n           WHERE lower(btrim(email)) = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ee873bd08079773f5f0fb3f2a401142ab85e9c88d3746e892b09e83b7fe3f6b7"
+}

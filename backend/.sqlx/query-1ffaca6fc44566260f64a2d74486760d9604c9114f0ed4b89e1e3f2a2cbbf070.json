@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, password_hash, full_name, roles, company_id,\n            employee_id, is_active, must_change_password, last_login, created_at, updated_at,\n            failed_login_attempts, login_locked_until\n        FROM users WHERE lower(btrim(email)) = lower(btrim($1)) AND is_active = TRUE AND deleted_at IS NULL",
+  "query": "SELECT id, email, password_hash, full_name, roles, company_id,\n            employee_id, is_active, must_change_password, last_login, created_at, updated_at,\n            failed_login_attempts, login_locked_until,\n            step_up_failed_attempts, step_up_locked_until\n        FROM users WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -156,11 +156,33 @@
             "name": "login_locked_until"
           }
         }
+      },
+      {
+        "ordinal": 14,
+        "name": "step_up_failed_attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "step_up_failed_attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "step_up_locked_until",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "step_up_locked_until"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -177,8 +199,10 @@
       false,
       false,
       false,
+      true,
+      false,
       true
     ]
   },
-  "hash": "7e4bd1ba0153233e4548c8bc27004c2284fc0c226cb64e9ea8ee7e8ab7b41bab"
+  "hash": "1ffaca6fc44566260f64a2d74486760d9604c9114f0ed4b89e1e3f2a2cbbf070"
 }

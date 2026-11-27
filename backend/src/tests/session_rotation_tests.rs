@@ -76,6 +76,9 @@ async fn concurrent_refresh_leaves_exactly_one_live_token() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    let _policy_guard = crate::tests::totp_route_tests::POLICY_SENSITIVE_LOGINS
+        .lock()
+        .await;
     let (session_id, raw) = seed_session(&pool).await;
 
     let one = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1, None);
@@ -101,6 +104,9 @@ async fn a_replayed_token_past_the_grace_window_revokes_the_family() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    let _policy_guard = crate::tests::totp_route_tests::POLICY_SENSITIVE_LOGINS
+        .lock()
+        .await;
     let (session_id, raw) = seed_session(&pool).await;
 
     let rotated = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1, None)

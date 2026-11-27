@@ -9,6 +9,22 @@ use crate::repositories::payroll_item_details;
 use crate::repositories::reads::payslip as payslip_reads;
 use crate::services::pdf_helpers::*;
 
+/// Limit concurrent synchronous `printpdf` renders across tokio blocking threads.
+static PDF_RENDER_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+pub(crate) async fn run_pdf_render<F>(f: F) -> AppResult<Vec<u8>>
+where
+    F: FnOnce() -> AppResult<Vec<u8>> + Send + 'static,
+{
+    let _permit = PDF_RENDER_SEMAPHORE
+        .acquire()
+        .await
+        .map_err(|_| AppError::Internal("PDF render semaphore closed".into()))?;
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| AppError::Internal(format!("PDF render task failed: {}", e)))?
+}
+
 pub async fn generate_payslip_pdf(
     pool: &PgPool,
     payslip_id: Uuid,
@@ -21,7 +37,7 @@ pub async fn generate_payslip_pdf(
 
     let lines = payroll_item_details::list_for_item(pool, payslip_id).await?;
 
-    render_payslip_page(&data, &company, &lines)
+    run_pdf_render(move || render_payslip_page(&data, &company, &lines)).await
 }
 
 pub async fn generate_bulk_payslips(
@@ -50,8 +66,8 @@ pub async fn generate_bulk_payslips(
 
     // printpdf is synchronous CPU work — rendering N pages inline would hold a
     // tokio worker thread (and the request's share of the 30s budget) hostage,
-    // so the render runs on the blocking pool.
-    let bytes = tokio::task::spawn_blocking(move || {
+    // so the render runs on the blocking pool under the shared semaphore.
+    run_pdf_render(move || {
         let mut main_doc = PdfDocument::new("Payslips");
         let font = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
         let bold = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
@@ -68,9 +84,6 @@ pub async fn generate_bulk_payslips(
         Ok(main_doc.save(&PdfSaveOptions::default(), &mut warnings))
     })
     .await
-    .map_err(|e| AppError::Internal(format!("Payslip render task failed: {}", e)))??;
-
-    Ok(bytes)
 }
 
 /// One payslip as a standalone single-page document.

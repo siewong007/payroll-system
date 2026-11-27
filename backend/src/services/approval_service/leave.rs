@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
-use crate::core::upload_path::validate_optional_file_url;
+use crate::core::upload_path::validate_optional_managed_upload_url;
 use crate::models::payroll::checked_round_sen;
 use crate::models::portal::{CreateLeaveRequest, LeaveRequest, UpdateLeaveRequest};
 use crate::repositories::reads::approvals as approval_reads;
@@ -59,7 +59,7 @@ pub async fn create_leave_request_admin(
     ensure_leave_type_in_company(pool, company_id, req.leave_type_id).await?;
     // `attachment_url` is joined onto a filesystem path by the backup export and
     // restore paths, so it is settled here rather than at every sink.
-    validate_optional_file_url(req.attachment_url.as_deref())?;
+    validate_optional_managed_upload_url(req.attachment_url.as_deref())?;
     upload_service::ensure_upload_attach_authorized(
         pool,
         access,
@@ -157,7 +157,7 @@ pub async fn update_leave_request_admin(
     crate::services::leave_rules::validate_period(start_date, end_date, days, working_days)?;
 
     let non_empty_attachment = req.attachment_url.as_deref().filter(|s| !s.is_empty());
-    validate_optional_file_url(non_empty_attachment)?;
+    validate_optional_managed_upload_url(non_empty_attachment)?;
     upload_service::ensure_upload_attach_authorized(pool, access, non_empty_attachment, false)
         .await?;
 
@@ -347,8 +347,24 @@ pub async fn cancel_leave_request_admin(
             AppError::BadRequest("Leave request not found or cannot be cancelled".into())
         })?;
 
+    let is_self_target = crate::repositories::users::is_employee_owned_by_user(
+        &mut *tx,
+        actor_id,
+        current.employee_id,
+        company_id,
+    )
+    .await?;
+    let actor_is_super_admin = crate::repositories::users::get_by_id(&mut *tx, actor_id)
+        .await?
+        .is_some_and(|u| u.roles.iter().any(|r| r == "super_admin"));
+
     if current.status == "approved" {
-        if payroll_runs::has_paid_covering_dates(
+        if is_self_target && !actor_is_super_admin {
+            return Err(AppError::Forbidden(
+                "You cannot cancel your own approved leave request. Ask another approver, or a super admin, to review it.".into(),
+            ));
+        }
+        if payroll_runs::has_non_draft_covering_dates(
             &mut *tx,
             company_id,
             current.employee_id,
@@ -358,7 +374,7 @@ pub async fn cancel_leave_request_admin(
         .await?
         {
             return Err(AppError::BadRequest(
-                "Approved leave covered by a paid payroll run cannot be cancelled".into(),
+                "Approved leave covered by a submitted or finalized payroll run cannot be cancelled".into(),
             ));
         }
 
@@ -384,7 +400,7 @@ pub async fn cancel_leave_request_admin(
                 ));
             }
 
-            let deleted = payroll_entries::delete_unprocessed_unpaid_leave(
+            let _deleted = payroll_entries::delete_unprocessed_unpaid_leave(
                 &mut *tx,
                 current.employee_id,
                 company_id,
@@ -392,15 +408,14 @@ pub async fn cancel_leave_request_admin(
                 &description,
             )
             .await?;
-            if deleted == 0
-                && payroll_entries::exists_processed_unpaid_leave(
-                    &mut *tx,
-                    current.employee_id,
-                    company_id,
-                    request_id,
-                    &description,
-                )
-                .await?
+            if payroll_entries::exists_processed_unpaid_leave(
+                &mut *tx,
+                current.employee_id,
+                company_id,
+                request_id,
+                &description,
+            )
+            .await?
             {
                 return Err(AppError::Conflict(
                     "Approved unpaid leave was processed by payroll while being cancelled.".into(),
@@ -456,6 +471,26 @@ pub async fn cancel_leave_request_admin(
         audit_meta,
     )
     .await;
+
+    if current.status == "approved" && is_self_target && actor_is_super_admin {
+        let _ = crate::services::audit_service::log_action_with_metadata(
+            pool,
+            Some(company_id),
+            Some(actor_id),
+            "self_approval_override",
+            "leave_request",
+            Some(cancelled.id),
+            None,
+            Some(serde_json::json!({
+                "employee_id": cancelled.employee_id,
+                "action": "cancel_leave_request_admin",
+                "self_target": true,
+            })),
+            Some("Super admin cancelled own approved leave request (override logged)"),
+            audit_meta,
+        )
+        .await;
+    }
 
     Ok(cancelled)
 }

@@ -163,12 +163,33 @@ pub struct UpdateAttendanceRecordRequest {
     pub reason: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct SetAttendanceMethodRequest {
     /// "qr_code" or "face_id"
     pub method: String,
     /// whether admins can override the global setting
     pub allow_company_override: Option<bool>,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for SetAttendanceMethodRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SetAttendanceMethodRequest")
+            .field("method", &self.method)
+            .field("allow_company_override", &self.allow_company_override)
+            .field(
+                "actor_password",
+                &self.actor_password.as_ref().map(|_| "***"),
+            )
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize)]

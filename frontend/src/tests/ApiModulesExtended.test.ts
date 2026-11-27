@@ -583,8 +583,10 @@ describe('admin API', () => {
     await admin.updateUser('user-1', { full_name: 'Renamed' });
     expect(apiMocks.put).toHaveBeenLastCalledWith('/admin/users/user-1', { full_name: 'Renamed' });
 
-    await admin.deleteUser('user-1');
-    expect(apiMocks.delete).toHaveBeenLastCalledWith('/admin/users/user-1');
+    await admin.deleteUser('user-1', { actor_password: 'pw' });
+    expect(apiMocks.delete).toHaveBeenLastCalledWith('/admin/users/user-1', {
+      data: { actor_password: 'pw' },
+    });
   });
 });
 

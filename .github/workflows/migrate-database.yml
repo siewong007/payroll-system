@@ -47,6 +47,15 @@ jobs:
     environment: production
 
     steps:
+      - name: Enforce protected default branch ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF:-}" != "refs/heads/main" && "${GITHUB_REF:-}" != "refs/heads/master" ]]; then
+            echo "Refusing manual migration from unprotected ref ${GITHUB_REF:-<unset>}" >&2
+            exit 1
+          fi
+
       - name: Check out repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

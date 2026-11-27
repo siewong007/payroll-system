@@ -11,9 +11,16 @@ import {
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { StepUpConfirmModal } from '@/components/ui/StepUpConfirmModal';
 import { useConfirm } from '@/lib/confirm';
 import { getErrorMessage } from '@/lib/utils';
 import { formatDateTime } from './attendanceHelpers';
+import type { StepUpCredentials } from '@/types';
+
+type PendingKioskAction =
+  | { kind: 'create'; label: string }
+  | { kind: 'revoke'; id: string; label: string }
+  | null;
 
 export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
@@ -26,6 +33,8 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   const [hasCopied, setHasCopied] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [pendingAction, setPendingAction] = useState<PendingKioskAction>(null);
+  const [stepUpError, setStepUpError] = useState('');
   const copyTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -42,25 +51,39 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   });
 
   const createMut = useMutation({
-    mutationFn: (l: string) => createKioskCredential(l),
+    mutationFn: ({ label: name, stepUp }: { label: string; stepUp: StepUpCredentials }) =>
+      createKioskCredential(name, stepUp),
     onSuccess: (data) => {
       setCreated(data);
       setCopied(false);
       setHasCopied(false);
       setLabel('');
       setError('');
+      setStepUpError('');
+      setPendingAction(null);
       queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] });
     },
     onError: (e: Error & { response?: { data?: { error?: string } } }) => {
-      setError(getErrorMessage(e, t('attendance.kioskModal.createFailed')));
+      const msg = getErrorMessage(e, t('attendance.kioskModal.createFailed'));
+      setStepUpError(msg);
+      setError(msg);
     },
   });
 
   const revokeMut = useMutation({
-    mutationFn: (id: string) => revokeKioskCredential(id),
-    onMutate: (id) => setRevokingId(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] }),
-    onError: (e) => setError(getErrorMessage(e, t('attendance.kioskModal.revokeFailed'))),
+    mutationFn: ({ id, stepUp }: { id: string; stepUp: StepUpCredentials }) =>
+      revokeKioskCredential(id, stepUp),
+    onMutate: ({ id }) => setRevokingId(id),
+    onSuccess: () => {
+      setStepUpError('');
+      setPendingAction(null);
+      queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] });
+    },
+    onError: (e) => {
+      const msg = getErrorMessage(e, t('attendance.kioskModal.revokeFailed'));
+      setStepUpError(msg);
+      setError(msg);
+    },
     onSettled: () => setRevokingId(null),
   });
 
@@ -158,7 +181,9 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                 setError(t('attendance.kioskModal.nameRequired'));
                 return;
               }
-              createMut.mutate(label.trim());
+              setError('');
+              setStepUpError('');
+              setPendingAction({ kind: 'create', label: label.trim() });
             }}
             className="mt-5 space-y-1.5"
           >
@@ -255,12 +280,10 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                               </span>
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  const ok = await confirmDialog({
-                                    description: t('attendance.kioskModal.revokeConfirm', { label: c.label }),
-                                    variant: 'danger',
-                                  });
-                                  if (ok) revokeMut.mutate(c.id);
+                                onClick={() => {
+                                  setError('');
+                                  setStepUpError('');
+                                  setPendingAction({ kind: 'revoke', id: c.id, label: c.label });
                                 }}
                                 disabled={isRevoking}
                                 className="min-h-11 min-w-11 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
@@ -359,16 +382,10 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                             {!revoked && (
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  const ok = await confirmDialog({
-                                    description: t('attendance.kioskModal.revokeConfirm', {
-                                      label: c.label,
-                                    }),
-                                    variant: 'danger',
-                                  });
-                                  if (ok) {
-                                    revokeMut.mutate(c.id);
-                                  }
+                                onClick={() => {
+                                  setError('');
+                                  setStepUpError('');
+                                  setPendingAction({ kind: 'revoke', id: c.id, label: c.label });
                                 }}
                                 disabled={isRevoking}
                                 className="min-h-11 min-w-11 md:min-h-9 md:min-w-9 inline-flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
@@ -393,6 +410,45 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
+
+      <StepUpConfirmModal
+        open={pendingAction !== null}
+        onClose={() => {
+          if (!createMut.isPending && !revokeMut.isPending) {
+            setPendingAction(null);
+            setStepUpError('');
+          }
+        }}
+        title={
+          pendingAction?.kind === 'revoke'
+            ? t('attendance.kioskModal.confirmRevokeTitle')
+            : t('attendance.kioskModal.confirmCreateTitle')
+        }
+        description={
+          pendingAction?.kind === 'revoke'
+            ? t('attendance.kioskModal.revokeConfirm', { label: pendingAction.label })
+            : pendingAction?.kind === 'create'
+              ? t('attendance.kioskModal.confirmCreateBody', { label: pendingAction.label })
+              : undefined
+        }
+        confirmLabel={
+          pendingAction?.kind === 'revoke'
+            ? t('attendance.kioskModal.revoke')
+            : t('attendance.kioskModal.createLink')
+        }
+        variant={pendingAction?.kind === 'revoke' ? 'danger' : 'primary'}
+        pending={createMut.isPending || revokeMut.isPending}
+        error={stepUpError}
+        onConfirm={(stepUp) => {
+          if (!pendingAction) return;
+          setStepUpError('');
+          if (pendingAction.kind === 'create') {
+            createMut.mutate({ label: pendingAction.label, stepUp });
+          } else {
+            revokeMut.mutate({ id: pendingAction.id, stepUp });
+          }
+        }}
+      />
     </Modal>
   );
 }

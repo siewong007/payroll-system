@@ -6,10 +6,12 @@ import { getPlatformAttendanceMethod, setPlatformAttendanceMethod } from '@/api/
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { StepUpConfirmModal } from '@/components/ui/StepUpConfirmModal';
 import { useAuth } from '@/context/AuthContext';
 import { userCan } from '@/lib/usePermissions';
 import { getErrorMessage } from '@/lib/utils';
 import { Navigate } from 'react-router';
+import type { StepUpCredentials } from '@/types';
 
 export function AttendanceSettings() {
   const { t } = useTranslation();
@@ -17,6 +19,8 @@ export function AttendanceSettings() {
   const queryClient = useQueryClient();
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [stepUpError, setStepUpError] = useState('');
   const overrideHeadingId = useId();
   const canManagePlatform = userCan(user, 'manage_platform_settings');
 
@@ -33,18 +37,23 @@ export function AttendanceSettings() {
   const allowOverride = draftOverride ?? (data?.allow_company_override ?? false);
 
   const mutation = useMutation({
-    mutationFn: () => setPlatformAttendanceMethod(method, allowOverride),
+    mutationFn: (stepUp: StepUpCredentials) =>
+      setPlatformAttendanceMethod(method, allowOverride, stepUp),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['platform-attendance-method'] });
       void queryClient.invalidateQueries({ queryKey: ['attendance-method'] });
       setDraftMethod(null);
       setDraftOverride(null);
+      setConfirmOpen(false);
+      setStepUpError('');
       setSaved(true);
       setError('');
       setTimeout(() => setSaved(false), 3000);
     },
     onError: (err) => {
-      setError(getErrorMessage(err, t('attendanceSettings.saveFailed')));
+      const msg = getErrorMessage(err, t('attendanceSettings.saveFailed'));
+      setStepUpError(msg);
+      setError(msg);
     },
   });
 
@@ -222,7 +231,11 @@ export function AttendanceSettings() {
             </div>
             <button
               type="button"
-              onClick={() => mutation.mutate()}
+              onClick={() => {
+                setStepUpError('');
+                setError('');
+                setConfirmOpen(true);
+              }}
               disabled={mutation.isPending}
               className="btn-primary !rounded-xl shrink-0 w-full sm:w-auto inline-flex items-center justify-center gap-2"
             >
@@ -254,6 +267,26 @@ export function AttendanceSettings() {
           </div>
         </div>
       </div>
+
+      <StepUpConfirmModal
+        open={confirmOpen}
+        onClose={() => {
+          if (!mutation.isPending) {
+            setConfirmOpen(false);
+            setStepUpError('');
+          }
+        }}
+        title={t('attendanceSettings.confirmSaveTitle')}
+        description={t('attendanceSettings.confirmSaveDescription')}
+        confirmLabel={t('common.saveChanges')}
+        pendingLabel={t('common.saving')}
+        pending={mutation.isPending}
+        error={stepUpError}
+        onConfirm={(creds) => {
+          setStepUpError('');
+          mutation.mutate(creds);
+        }}
+      />
     </div>
   );
 }

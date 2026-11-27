@@ -230,10 +230,10 @@ async fn exec_lacks_write_permissions_and_non_super_admin_blocked_from_platform_
     let backup_res = app_for(pool)
         .await
         .oneshot(json_request(
-            "GET",
+            "POST",
             "/api/admin/backup/export",
             &admin_token,
-            "",
+            r#"{"actor_password":"Password123!"}"#,
         ))
         .await
         .expect("backup response");
@@ -500,7 +500,7 @@ async fn confidential_documents_and_cross_tenant_upload_isolation() {
 
     let stored_name = format!("{}_confidential.pdf", Uuid::now_v7());
     let file_url = format!("/api/uploads/{stored_name}");
-    uploaded_files::insert(&pool, &stored_name, company_a, Some(hr_user_a))
+    uploaded_files::insert(&pool, &stored_name, company_a, Some(hr_user_a), 13)
         .await
         .expect("insert uploaded_files owner");
 
@@ -820,6 +820,9 @@ async fn switch_company_preserves_jwt_exp_and_revokes_removed_company_access() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    let _policy_guard = crate::tests::totp_route_tests::POLICY_SENSITIVE_LOGINS
+        .lock()
+        .await;
     let company_a = seed_company(&pool).await;
     let company_b = seed_company(&pool).await;
     let user_id = seed_user(&pool, company_a, "admin").await;
@@ -1213,7 +1216,7 @@ async fn confidential_sibling_ref_blocks_read_and_unindexed_upload_attach_fails_
 
     let stored_name = format!("{}_dualref.pdf", Uuid::now_v7());
     let file_url = format!("/api/uploads/{stored_name}");
-    uploaded_files::insert(&pool, &stored_name, company_id, Some(hr_user))
+    uploaded_files::insert(&pool, &stored_name, company_id, Some(hr_user), 13)
         .await
         .expect("insert uploaded_files");
 
@@ -1598,7 +1601,7 @@ async fn audit_redacts_extended_sensitive_keys_and_run_audit_masks_privileged_ac
         masked.into_iter().next().unwrap(),
     ];
 
-    audit_service::redact_audit_logs(&mut rows, true, true);
+    audit_service::redact_audit_logs(&mut rows, true, true, true, None);
     assert_eq!(
         rows[0].new_values.as_ref().unwrap()["working_spouse"],
         "[REDACTED]"
@@ -1796,6 +1799,9 @@ async fn refresh_session_revokes_or_rescopes_when_company_membership_removed() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    let _policy_guard = crate::tests::totp_route_tests::POLICY_SENSITIVE_LOGINS
+        .lock()
+        .await;
     let company_a = seed_company(&pool).await;
     let company_b = seed_company(&pool).await;
 
@@ -1903,4 +1909,263 @@ async fn audit_list_for_run_strips_privileged_actor_uuids_from_jsonb() {
         unmasked[0].new_values.as_ref().unwrap()["approved_by"],
         serde_json::json!(admin_id)
     );
+}
+
+#[tokio::test]
+async fn step_up_password_lockout_triggers_429_after_five_failures_and_clears_on_success() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let user_id = seed_user(&pool, company_id, "admin").await;
+    let hash = bcrypt::hash("CorrectPass123!", 4).expect("hash password");
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&hash)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("set user password hash");
+
+    for attempt in 1..=4 {
+        let err = auth_service::verify_user_password_for_session(
+            &pool,
+            user_id,
+            None,
+            "WrongPass123!",
+            None,
+        )
+        .await
+        .expect_err("wrong step-up password must fail");
+        assert!(
+            matches!(err, AppError::BadRequest(_)),
+            "attempt {attempt} expected BadRequest, got {err:?}"
+        );
+    }
+
+    let lockout_err =
+        auth_service::verify_user_password_for_session(&pool, user_id, None, "WrongPass123!", None)
+            .await
+            .expect_err("5th failure must trigger step-up lockout");
+    match lockout_err {
+        AppError::TooManyRequests(msg) => assert!(msg.contains("15 minutes"), "{msg}"),
+        other => panic!("expected TooManyRequests on 5th failure, got {other:?}"),
+    }
+
+    sqlx::query("UPDATE users SET step_up_locked_until = NULL WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("expire lockout");
+
+    auth_service::verify_user_password_for_session(&pool, user_id, None, "CorrectPass123!", None)
+        .await
+        .expect("valid step-up clears failure count");
+
+    let failed_attempts: i32 =
+        sqlx::query_scalar("SELECT step_up_failed_attempts FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch failed attempts");
+    assert_eq!(failed_attempts, 0);
+}
+
+#[tokio::test]
+async fn payroll_entry_multi_editor_sod_retains_original_author_after_second_editor() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 400_000).await;
+    let user_a = seed_user(&pool, company_id, "payroll_admin").await;
+    let user_b = seed_user(&pool, company_id, "payroll_admin").await;
+
+    let entry = crate::repositories::payroll_entries::insert(
+        &pool,
+        employee_id,
+        company_id,
+        2026,
+        8,
+        "earning",
+        "allowance",
+        "Travel allowance",
+        25_000,
+        None,
+        None,
+        Some(true),
+        user_a,
+    )
+    .await
+    .expect("insert manual entry");
+    assert_eq!(entry.editor_ids, vec![user_a]);
+
+    let updated = crate::repositories::payroll_entries::update(
+        &pool,
+        entry.id,
+        company_id,
+        employee_id,
+        2026,
+        8,
+        "earning",
+        "allowance",
+        "Travel allowance revised",
+        30_000,
+        None,
+        None,
+        Some(true),
+        user_b,
+    )
+    .await
+    .expect("update manual entry")
+    .expect("updated row present");
+
+    assert!(updated.editor_ids.contains(&user_a));
+    assert!(updated.editor_ids.contains(&user_b));
+}
+
+#[tokio::test]
+async fn attendance_self_edit_future_timestamps_and_qr_fragment_url_enforced() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let qr = crate::services::attendance_service::generate_qr_token(
+        &pool,
+        company_id,
+        "https://payrollmy.com",
+        None,
+    )
+    .await
+    .expect("generate qr");
+    assert!(
+        qr.scan_url
+            .starts_with("https://payrollmy.com/attendance/scan#token=")
+    );
+
+    let hr_emp = seed_employee(&pool, company_id, None, 350_000).await;
+    let other_emp = seed_employee(&pool, company_id, None, 350_000).await;
+    let hr_user = seed_user(&pool, company_id, "hr_manager").await;
+    sqlx::query("UPDATE users SET employee_id = $1 WHERE id = $2")
+        .bind(hr_emp)
+        .bind(hr_user)
+        .execute(&pool)
+        .await
+        .expect("link hr_manager employee");
+
+    let self_err = crate::services::attendance_service::manual_attendance(
+        &pool,
+        company_id,
+        crate::models::attendance::ManualAttendanceRequest {
+            employee_id: hr_emp,
+            check_in_at: Utc::now() - chrono::Duration::hours(2),
+            check_out_at: None,
+            status: Some("present".into()),
+            notes: None,
+        },
+        hr_user,
+        None,
+    )
+    .await
+    .expect_err("self manual attendance must fail for non-super_admin");
+    assert!(matches!(self_err, AppError::Forbidden(_)));
+
+    let future_err = crate::services::attendance_service::manual_attendance(
+        &pool,
+        company_id,
+        crate::models::attendance::ManualAttendanceRequest {
+            employee_id: other_emp,
+            check_in_at: Utc::now() + chrono::Duration::hours(2),
+            check_out_at: None,
+            status: Some("present".into()),
+            notes: None,
+        },
+        hr_user,
+        None,
+    )
+    .await
+    .expect_err("future check-in must be rejected");
+    assert!(
+        matches!(future_err, AppError::BadRequest(ref m) if m.contains("future")),
+        "expected future timestamp rejection, got {future_err:?}"
+    );
+}
+
+#[test]
+fn upload_url_https_only_ipv6_allowlist_and_audit_redaction_hardening() {
+    assert!(upload_path::validate_file_url("http://example.com/a.pdf").is_err());
+    assert!(upload_path::validate_file_url("https://example.com/a.pdf").is_ok());
+    assert!(upload_path::validate_file_url("/api/uploads/abc.pdf").is_ok());
+
+    assert!(is_blocked_ip("100::1".parse::<IpAddr>().unwrap()));
+    assert!(is_blocked_ip("fc00::1".parse::<IpAddr>().unwrap()));
+    assert!(is_blocked_ip("fe80::1".parse::<IpAddr>().unwrap()));
+    assert!(!is_blocked_ip(
+        "2606:4700:4700::1111".parse::<IpAddr>().unwrap()
+    ));
+
+    let priv_user = Uuid::new_v4();
+    let priv_set = std::collections::HashSet::from([priv_user]);
+    let mut logs = vec![
+        AuditLogWithUser {
+            id: Uuid::new_v4(),
+            user_id: Some(priv_user),
+            action: "send".into(),
+            entity_type: "letter".into(),
+            entity_id: None,
+            old_values: None,
+            new_values: Some(serde_json::json!({
+                "recipient_email": "alice@example.com",
+                "subject": "Confidential Offer",
+                "body_html": "<p>RM 12,000</p>",
+                "template_name": "Offer Letter"
+            })),
+            ip_address: None,
+            user_agent: None,
+            description: None,
+            created_at: Utc::now(),
+            user_email: Some("admin@example.com".into()),
+            user_full_name: Some("Admin".into()),
+        },
+        AuditLogWithUser {
+            id: Uuid::new_v4(),
+            user_id: Some(priv_user),
+            action: "update".into(),
+            entity_type: "payroll_entry".into(),
+            entity_id: None,
+            old_values: None,
+            new_values: Some(serde_json::json!({
+                "item_type": "addition",
+                "category": "bonus",
+                "amount": 50_000,
+                "editor_ids": [priv_user]
+            })),
+            ip_address: None,
+            user_agent: None,
+            description: None,
+            created_at: Utc::now(),
+            user_email: None,
+            user_full_name: None,
+        },
+    ];
+
+    audit_service::redact_audit_logs(&mut logs, true, false, true, Some(&priv_set));
+
+    assert!(logs[0].user_id.is_none());
+    let letter_vals = logs[0].new_values.as_ref().unwrap();
+    assert_eq!(
+        letter_vals["recipient_email"],
+        serde_json::json!("[REDACTED]")
+    );
+    assert_eq!(letter_vals["subject"], serde_json::json!("[REDACTED]"));
+    assert_eq!(letter_vals["body_html"], serde_json::json!("[REDACTED]"));
+    assert_eq!(
+        letter_vals["template_name"],
+        serde_json::json!("Offer Letter")
+    );
+
+    let entry_vals = logs[1].new_values.as_ref().unwrap();
+    assert_eq!(entry_vals["item_type"], serde_json::json!("[REDACTED]"));
+    assert_eq!(entry_vals["category"], serde_json::json!("[REDACTED]"));
+    assert_eq!(entry_vals["amount"], serde_json::json!("[REDACTED]"));
+    assert_eq!(entry_vals["editor_ids"], serde_json::json!(["[REDACTED]"]));
 }

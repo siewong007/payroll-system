@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use sqlx::{PgConnection, PgPool};
@@ -165,11 +165,11 @@ fn restored_attachment_url(plan: &files::RestorePlan, stored_url: &str) -> Optio
 /// Why a link was cleared, in terms the admin reading `ImportResult` can act on.
 fn dropped_link_reason(plan: &files::RestorePlan, stored_url: &str) -> &'static str {
     if plan.is_dropped(stored_url) {
-        "the file travelled with the backup but its name carries no supported file extension"
+        "the file travelled with the backup but failed validation or carries an unsupported file extension"
     } else if stored_url.starts_with(upload_path::UPLOAD_URL_PREFIX) {
         "the file itself is not included in this backup"
     } else {
-        "the stored link is neither an uploaded file nor an http(s) address"
+        "the stored link is neither an uploaded file nor an https:// address"
     }
 }
 
@@ -347,6 +347,92 @@ fn sanitize_attendance_config(backup: &mut CompanyBackup, warnings: &mut Vec<Str
     }
 }
 
+fn referenced_backup_file_keys(backup: &CompanyBackup) -> HashSet<&str> {
+    let mut keys = HashSet::new();
+    for d in &backup.documents {
+        if !d.file_url.is_empty() {
+            keys.insert(d.file_url.as_str());
+        }
+    }
+    for lr in &backup.leave_requests {
+        if let Some(url) = lr.attachment_url.as_deref()
+            && !url.is_empty()
+        {
+            keys.insert(url);
+        }
+    }
+    for c in &backup.claims {
+        if let Some(url) = c.receipt_url.as_deref()
+            && !url.is_empty()
+        {
+            keys.insert(url);
+        }
+    }
+    if let Some(url) = backup.company.logo_url.as_deref()
+        && !url.is_empty()
+    {
+        keys.insert(url);
+    }
+    keys
+}
+
+fn validate_backup_row_caps(backup: &CompanyBackup) -> AppResult<()> {
+    const MAX_EMPLOYEES: usize = 20_000;
+    const MAX_TABLE_ROWS: usize = 100_000;
+    const MAX_DETAIL_ROWS: usize = 500_000;
+    const MAX_FILES: usize = 10_000;
+
+    if backup.employees.len() > MAX_EMPLOYEES {
+        return Err(AppError::BadRequest(format!(
+            "Backup exceeds maximum supported employee count ({MAX_EMPLOYEES})"
+        )));
+    }
+    if backup.files.len() > MAX_FILES {
+        return Err(AppError::BadRequest(format!(
+            "Backup exceeds maximum supported embedded file count ({MAX_FILES})"
+        )));
+    }
+    for (name, len) in [
+        ("payroll_groups", backup.payroll_groups.len()),
+        ("employee_allowances", backup.employee_allowances.len()),
+        ("salary_history", backup.salary_history.len()),
+        ("tp3_records", backup.tp3_records.len()),
+        ("leave_types", backup.leave_types.len()),
+        ("leave_balances", backup.leave_balances.len()),
+        ("leave_requests", backup.leave_requests.len()),
+        ("claims", backup.claims.len()),
+        ("overtime_applications", backup.overtime_applications.len()),
+        ("payroll_runs", backup.payroll_runs.len()),
+        ("payroll_items", backup.payroll_items.len()),
+        ("payroll_entries", backup.payroll_entries.len()),
+        ("document_categories", backup.document_categories.len()),
+        ("documents", backup.documents.len()),
+        ("teams", backup.teams.len()),
+        ("team_members", backup.team_members.len()),
+        ("holidays", backup.holidays.len()),
+        ("working_day_config", backup.working_day_config.len()),
+        ("email_templates", backup.email_templates.len()),
+        ("company_settings", backup.company_settings.len()),
+        (
+            "company_work_schedules",
+            backup.company_work_schedules.len(),
+        ),
+        ("company_locations", backup.company_locations.len()),
+    ] {
+        if len > MAX_TABLE_ROWS {
+            return Err(AppError::BadRequest(format!(
+                "Backup table '{name}' exceeds maximum supported row count ({MAX_TABLE_ROWS})"
+            )));
+        }
+    }
+    if backup.payroll_item_details.len() > MAX_DETAIL_ROWS {
+        return Err(AppError::BadRequest(format!(
+            "Backup table 'payroll_item_details' exceeds maximum supported row count ({MAX_DETAIL_ROWS})"
+        )));
+    }
+    Ok(())
+}
+
 pub async fn import_company(
     pool: &PgPool,
     mut backup: CompanyBackup,
@@ -361,17 +447,20 @@ pub async fn import_company(
             SUPPORTED_FORMAT_VERSIONS.join(", ")
         )));
     }
+    validate_backup_row_caps(&backup)?;
 
     let mut warnings = Vec::new();
 
-    // Nothing the archive claims about where a file lives is trusted or stored:
-    // every blob is written under a server-generated name and the rows are
-    // rewritten to match. The pass runs here, above `pool.begin()`, so it stays
-    // out of the restore transaction and clear of the fail-closed id remaps.
-    let file_plan = files::plan_restore(&backup.files);
-    let broken_links = rewrite_attachment_urls(&mut backup, &file_plan);
+    // Validate and decode only blobs referenced by imported rows BEFORE rewriting
+    // URLs so rejected blobs never leave dangling `/api/uploads/<name>` references.
+    let mut file_plan = {
+        let referenced = referenced_backup_file_keys(&backup);
+        files::plan_restore_referenced(&backup.files, Some(&referenced))
+    };
     let (validated_blobs, pre_blob_warnings) =
         files::decode_and_validate_blobs(&backup.files, &file_plan);
+    file_plan.retain_only_validated(&validated_blobs);
+    let broken_links = rewrite_attachment_urls(&mut backup, &file_plan);
 
     // Also above `pool.begin()`: every value the archive supplies for a
     // CHECK-constrained or trigger-guarded column is brought inside what the
@@ -490,32 +579,34 @@ pub async fn import_company(
         old.map(|id| remap_id(&remap, id, field)).transpose()
     };
 
-    // Pre-hash temporary portal passwords off-thread *before* starting the DB
-    // transaction so cost-12 bcrypt never stalls Tokio workers or holds a TX lock.
-    let mut emails_needing_hash: Vec<String> = Vec::new();
-    for e in &backup.employees {
-        if let Some(email) =
+    // Pre-hash one temporary locked portal password off-thread *before* starting
+    // the DB tx (batched email check so N-employee restores take O(1) DB + CPU).
+    let normalized_emails: Vec<String> = backup
+        .employees
+        .iter()
+        .filter_map(|e| {
             importable_employee_email(e.email.as_deref(), e.is_active, e.deleted_at.is_some())
-            && users::find_by_email(pool, email).await?.is_none()
-        {
-            emails_needing_hash.push(email.to_string());
-        }
-    }
-    let precomputed_hashes: HashMap<String, String> = if emails_needing_hash.is_empty() {
-        HashMap::new()
-    } else {
-        tokio::task::spawn_blocking(move || {
-            let mut map = HashMap::with_capacity(emails_needing_hash.len());
-            for email in emails_needing_hash {
-                let secret = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
-                let hash = bcrypt::hash(&secret, 12)
-                    .map_err(|e| AppError::Internal(format!("Failed to hash password: {e}")))?;
-                map.insert(email, hash);
-            }
-            Ok::<_, AppError>(map)
+                .map(|email| email.to_ascii_lowercase())
         })
-        .await
-        .map_err(|e| AppError::Internal(format!("Password hashing task failed: {e}")))??
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let existing_emails = users::find_existing_normalized_emails(pool, &normalized_emails).await?;
+    let needs_any_new_account = normalized_emails
+        .iter()
+        .any(|email| !existing_emails.contains(email));
+    let shared_placeholder_hash: Option<String> = if needs_any_new_account {
+        Some(
+            tokio::task::spawn_blocking(|| {
+                let secret = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
+                bcrypt::hash(&secret, 12)
+                    .map_err(|e| AppError::Internal(format!("Failed to hash password: {e}")))
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("Password hashing task failed: {e}")))??,
+        )
+    } else {
+        None
     };
 
     let mut tx = pool.begin().await?;
@@ -576,7 +667,12 @@ pub async fn import_company(
         if let Some(email) =
             importable_employee_email(e.email.as_deref(), e.is_active, e.deleted_at.is_some())
         {
-            let pre_hash = precomputed_hashes.get(email).map(String::as_str);
+            let normalized_email = email.to_ascii_lowercase();
+            let pre_hash = if existing_emails.contains(&normalized_email) {
+                None
+            } else {
+                shared_placeholder_hash.as_deref()
+            };
             match provision_imported_employee_account_with_hash(
                 &mut tx,
                 employee_id,
@@ -789,6 +885,7 @@ pub async fn import_company(
         )
         .await?;
     }
+    backup_repo::backfill_restored_overtime_runs(&mut tx, new_company_id).await?;
     for dc in &backup.document_categories {
         backup_repo::insert_document_category(
             &mut *tx,
@@ -835,11 +932,22 @@ pub async fn import_company(
         .await?;
     }
     for et in &backup.email_templates {
+        let sanitized_et = crate::models::backup::EmailTemplateExport {
+            id: et.id,
+            company_id: et.company_id,
+            name: et.name.clone(),
+            letter_type: et.letter_type.clone(),
+            subject: et.subject.clone(),
+            body_html: crate::services::email_service::sanitize_email_html(&et.body_html),
+            is_active: et.is_active,
+            created_at: et.created_at,
+            updated_at: et.updated_at,
+        };
         backup_repo::insert_email_template(
             &mut *tx,
             r(et.id, "email_templates.id")?,
             new_company_id,
-            et,
+            &sanitized_et,
         )
         .await?;
     }
@@ -957,12 +1065,18 @@ pub async fn import_company(
 
     tx.commit().await?;
 
-    let (mut file_warnings, restored_names) =
+    let (mut file_warnings, restored_files) =
         files::write_validated_blobs(validated_blobs, pre_blob_warnings).await;
-    for stored_name in &restored_names {
-        if let Err(err) =
-            crate::repositories::uploaded_files::insert(pool, stored_name, new_company_id, None)
-                .await
+    let mut restored_names = Vec::with_capacity(restored_files.len());
+    for (stored_name, size_bytes) in &restored_files {
+        if let Err(err) = crate::repositories::uploaded_files::insert(
+            pool,
+            stored_name,
+            new_company_id,
+            None,
+            *size_bytes,
+        )
+        .await
         {
             if let Ok(path) = upload_path::stored_path(stored_name) {
                 let _ = tokio::fs::remove_file(&path).await;
@@ -972,6 +1086,8 @@ pub async fn import_company(
                 "Restored file \"{}\" could not be registered and was removed.",
                 stored_name
             ));
+        } else {
+            restored_names.push(stored_name.clone());
         }
     }
     for old_name in replaced_uploads {
@@ -1293,7 +1409,7 @@ mod tests {
 
         assert!(
             dropped_link_reason(&plan, "/api/uploads/../../app/.env")
-                .contains("no supported file extension")
+                .contains("unsupported file extension")
         );
         assert!(
             dropped_link_reason(&plan, "/api/uploads/absent.pdf")

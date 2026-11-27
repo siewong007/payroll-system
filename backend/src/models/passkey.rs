@@ -77,19 +77,6 @@ pub struct RegistrationCompleteRequest {
 }
 
 #[derive(Deserialize)]
-pub struct AuthBeginRequest {
-    pub email: String,
-    #[serde(default)]
-    pub turnstile_token: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct AuthBeginResponse {
-    pub challenge_id: Uuid,
-    pub options: RequestChallengeResponse,
-}
-
-#[derive(Deserialize)]
 pub struct AuthCompleteRequest {
     pub challenge_id: Uuid,
     pub credential: PublicKeyCredential,
@@ -112,9 +99,4 @@ pub struct CheckPasskeyRequest {
     pub email: String,
     #[serde(default)]
     pub turnstile_token: Option<String>,
-}
-
-pub struct ConsumedChallenge {
-    pub user_id: Option<Uuid>,
-    pub state_json: serde_json::Value,
 }

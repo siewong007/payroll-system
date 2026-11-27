@@ -553,6 +553,8 @@ pub async fn mark_absent_returning(
                            AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $1
                            AND ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
                      )
+                   ORDER BY e.id
+                   FOR UPDATE OF e
                    ON CONFLICT (employee_id, check_in_at)
                        WHERE created_by IS NULL
                          AND status = 'absent'
@@ -632,6 +634,8 @@ pub async fn mark_absent_returning(
                            AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $1
                            AND ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
                      )
+                   ORDER BY e.id
+                   FOR UPDATE OF e
                    ON CONFLICT (employee_id, check_in_at)
                        WHERE created_by IS NULL
                          AND status = 'absent'

@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { StepUpConfirmModal } from '@/components/ui/StepUpConfirmModal';
 import { UserFormModal } from './UserFormModal';
 import {
   ALL_ROLES,
@@ -20,7 +21,7 @@ import {
 } from '@/lib/roles';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
-import type { UserWithCompanies } from '@/types';
+import type { StepUpCredentials, UserWithCompanies } from '@/types';
 
 const PER_PAGE = 20;
 
@@ -97,7 +98,8 @@ export function UserManagement() {
   };
 
   const deleteMutation = useMutation({
-    mutationFn: (userId: string) => deleteUser(userId),
+    mutationFn: ({ userId, stepUp }: { userId: string; stepUp: StepUpCredentials }) =>
+      deleteUser(userId, stepUp),
     onSuccess: () => {
       refreshUsers();
       toast.success(t('users.deleteSuccess'));
@@ -421,50 +423,29 @@ export function UserManagement() {
         )}
       </Modal>
 
-      <Modal
+      <StepUpConfirmModal
         open={deleteTarget !== null}
-        onClose={() => { if (!deleteMutation.isPending) closeDelete(); }}
+        onClose={closeDelete}
         title={t('users.deleteTitle')}
-        maxWidth="max-w-sm"
-        footer={
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" disabled={deleteMutation.isPending} onClick={closeDelete} className="btn-secondary">
-              {t('common.cancel')}
-            </button>
-            <button
-              type="button"
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-              disabled={deleteMutation.isPending}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 transition-colors disabled:opacity-50"
-            >
-              {deleteMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                  {t('common.deleting')}
-                </>
-              ) : (
-                t('common.delete')
-              )}
-            </button>
-          </div>
-        }
-      >
-        {deleteError && (
-          <div
-            role="alert"
-            className="mb-4 p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/25"
-          >
-            {deleteError}
-          </div>
-        )}
-        <p className="text-sm text-gray-600 dark:text-slate-300">
+        description={
           <Trans
             i18nKey="users.deleteBody"
             values={{ name: deleteTarget?.full_name }}
             components={{ b: <span className="font-medium text-gray-900 dark:text-slate-100" /> }}
           />
-        </p>
-      </Modal>
+        }
+        confirmLabel={t('common.delete')}
+        pendingLabel={t('common.deleting')}
+        variant="danger"
+        pending={deleteMutation.isPending}
+        error={deleteError}
+        onConfirm={(stepUp) => {
+          if (deleteTarget) {
+            setDeleteError('');
+            deleteMutation.mutate({ userId: deleteTarget.id, stepUp });
+          }
+        }}
+      />
     </div>
   );
 }

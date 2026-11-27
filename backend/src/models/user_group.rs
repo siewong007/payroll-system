@@ -39,7 +39,7 @@ pub struct UserGroupMember {
     pub email: String,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Deserialize, Validate)]
 pub struct CreateUserGroupRequest {
     #[validate(length(min = 1, max = 100, message = "must be 1-100 characters"))]
     pub name: String,
@@ -47,9 +47,31 @@ pub struct CreateUserGroupRequest {
     /// Permission keys, validated against `Permission::as_str()` by the service.
     #[serde(default)]
     pub permissions: Vec<String>,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+impl std::fmt::Debug for CreateUserGroupRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateUserGroupRequest")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("permissions", &self.permissions)
+            .field(
+                "actor_password",
+                &self.actor_password.as_ref().map(|_| "***"),
+            )
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Deserialize, Validate)]
 pub struct UpdateUserGroupRequest {
     #[validate(length(min = 1, max = 100, message = "must be 1-100 characters"))]
     pub name: Option<String>,
@@ -58,9 +80,52 @@ pub struct UpdateUserGroupRequest {
     /// Absent leaves the permission set untouched; present replaces it
     /// wholesale, including with an empty list.
     pub permissions: Option<Vec<String>>,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+impl std::fmt::Debug for UpdateUserGroupRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UpdateUserGroupRequest")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("is_active", &self.is_active)
+            .field("permissions", &self.permissions)
+            .field(
+                "actor_password",
+                &self.actor_password.as_ref().map(|_| "***"),
+            )
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
 pub struct AddUserGroupMemberRequest {
     pub user_id: Uuid,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for AddUserGroupMemberRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddUserGroupMemberRequest")
+            .field("user_id", &self.user_id)
+            .field(
+                "actor_password",
+                &self.actor_password.as_ref().map(|_| "***"),
+            )
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
 }

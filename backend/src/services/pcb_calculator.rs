@@ -179,17 +179,39 @@ fn calculate_reliefs(
                 tax_year, EPF_RELIEF_TYPE, EPF_RELIEF_TYPE_LEGACY
             ))
         })?;
-    let annual_epf = input.ytd_epf + (input.epf_employee_monthly * remaining_months as i64);
+    let remaining_i64 = i64::from(remaining_months);
+    let projected_epf = input
+        .epf_employee_monthly
+        .checked_mul(remaining_i64)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+    let annual_epf = input
+        .ytd_epf
+        .checked_add(projected_epf)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
     let epf_relief = annual_epf.min(epf_cap);
 
     // SOCSO relief
     let socso_cap = get_relief_amount(tables, "socso_relief", tax_year)?;
-    let annual_socso = input.ytd_socso + (input.socso_employee_monthly * remaining_months as i64);
+    let projected_socso = input
+        .socso_employee_monthly
+        .checked_mul(remaining_i64)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+    let annual_socso = input
+        .ytd_socso
+        .checked_add(projected_socso)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
     let socso_relief = annual_socso.min(socso_cap);
 
     // EIS relief
     let eis_cap = get_relief_amount(tables, "eis_relief", tax_year)?;
-    let annual_eis = input.ytd_eis + (input.eis_employee_monthly * remaining_months as i64);
+    let projected_eis = input
+        .eis_employee_monthly
+        .checked_mul(remaining_i64)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+    let annual_eis = input
+        .ytd_eis
+        .checked_add(projected_eis)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
     let eis_relief = annual_eis.min(eis_cap);
 
     // Spouse relief (non-working spouse only)
@@ -201,14 +223,22 @@ fn calculate_reliefs(
 
     // Child relief
     let child_relief = get_relief_amount(tables, "child_under_18", tax_year)?;
-    let total_child_relief = child_relief * input.num_children as i64;
+    let total_child_relief = child_relief
+        .checked_mul(i64::from(input.num_children))
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
 
-    let total_reliefs = individual_relief
-        + epf_relief
-        + socso_relief
-        + eis_relief
-        + spouse_relief
-        + total_child_relief;
+    let mut total_reliefs = individual_relief;
+    for r in [
+        epf_relief,
+        socso_relief,
+        eis_relief,
+        spouse_relief,
+        total_child_relief,
+    ] {
+        total_reliefs = total_reliefs
+            .checked_add(r)
+            .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+    }
 
     Ok(total_reliefs)
 }
@@ -300,14 +330,15 @@ fn calculate_bonus_pcb(
     total_zakat: i64,
     tax_without_bonus: i64,
 ) -> AppResult<i64> {
-    let tax_with_bonus = annual_tax_payable(
-        tables,
-        annual_income_without_bonus + bonus_amount,
-        reliefs,
-        total_zakat,
-    )?;
+    let annual_with_bonus = annual_income_without_bonus
+        .checked_add(bonus_amount)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+    let tax_with_bonus = annual_tax_payable(tables, annual_with_bonus, reliefs, total_zakat)?;
 
-    let bonus_tax = (tax_with_bonus - tax_without_bonus).max(0);
+    let bonus_tax = tax_with_bonus
+        .checked_sub(tax_without_bonus)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?
+        .max(0);
     Ok(round_up_to_ringgit(bonus_tax))
 }
 

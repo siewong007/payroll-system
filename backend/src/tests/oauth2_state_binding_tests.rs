@@ -58,17 +58,29 @@ fn the_binder_is_read_back_alongside_the_refresh_cookie() {
     let cookies = "refresh_token=rt_abc; oauth2_binder=b1nd3r";
     headers.insert(header::COOKIE, cookies.parse().unwrap());
 
-    let binder = cookie::extract_oauth_state_binder(&headers);
-    let refresh = cookie::extract_refresh_token(&headers);
+    let binder = cookie::extract_oauth_state_binder(&headers, "http://localhost:5173");
+    let refresh = cookie::extract_refresh_token(&headers, "http://localhost:5173");
     assert_eq!(binder.as_deref(), Some("b1nd3r"));
     assert_eq!(refresh.as_deref(), Some("rt_abc"));
+
+    // Over HTTPS only `__Secure-` cookies are accepted.
+    assert_eq!(
+        cookie::extract_oauth_state_binder(&headers, "https://payroll.example"),
+        None
+    );
+    assert_eq!(
+        cookie::extract_refresh_token(&headers, "https://payroll.example"),
+        None
+    );
 
     // A cleared cookie is still sent by some clients; an empty value is absent.
     let mut emptied = HeaderMap::new();
     emptied.insert(header::COOKIE, "oauth2_binder=".parse().unwrap());
-    assert!(cookie::extract_oauth_state_binder(&emptied).is_none());
+    assert!(cookie::extract_oauth_state_binder(&emptied, "http://localhost:5173").is_none());
 
-    assert!(cookie::extract_oauth_state_binder(&HeaderMap::new()).is_none());
+    assert!(
+        cookie::extract_oauth_state_binder(&HeaderMap::new(), "http://localhost:5173").is_none()
+    );
 }
 
 /// The login-CSRF shape: a callback URL carrying a valid state, loaded in a

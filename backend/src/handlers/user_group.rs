@@ -8,6 +8,7 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::AppResult;
 use crate::core::extract::ValidatedJson;
+use crate::models::user_company::StepUpConfirmRequest;
 use crate::models::user_group::{
     AddUserGroupMemberRequest, CreateUserGroupRequest, UpdateUserGroupRequest, UserGroup,
     UserGroupMember, UserGroupWithDetail,
@@ -57,6 +58,14 @@ pub async fn create_group(
     ValidatedJson(req): ValidatedJson<CreateUserGroupRequest>,
 ) -> AppResult<Json<UserGroup>> {
     let company_id = auth.authorize(Permission::ManageUsers)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        req.actor_password.as_deref(),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
     let group = user_group_service::create_group(
         &state.pool,
         company_id,
@@ -78,6 +87,14 @@ pub async fn update_group(
     ValidatedJson(req): ValidatedJson<UpdateUserGroupRequest>,
 ) -> AppResult<Json<UserGroup>> {
     let company_id = auth.authorize(Permission::ManageUsers)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        req.actor_password.as_deref(),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
     let group = user_group_service::update_group(
         &state.pool,
         company_id,
@@ -98,8 +115,17 @@ pub async fn delete_group(
     auth: AuthUser,
     Path(id): Path<Uuid>,
     audit_meta: AuditRequestMeta,
+    ValidatedJson(req): ValidatedJson<StepUpConfirmRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let (user_id, company_id) = auth.authorize_actor(Permission::ManageUsers)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.actor_password),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
     user_group_service::delete_group(&state.pool, company_id, id, user_id, Some(&audit_meta))
         .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -132,6 +158,14 @@ pub async fn add_member(
     Json(req): Json<AddUserGroupMemberRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.authorize(Permission::ManageUsers)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        req.actor_password.as_deref(),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
     user_group_service::add_member(
         &state.pool,
         company_id,

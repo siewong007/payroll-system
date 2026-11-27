@@ -117,22 +117,19 @@ pub fn local_upload_path(file_url: &str) -> AppResult<Option<PathBuf>> {
 
 /// Write-time gate for every `*_url` column whose value can name a stored upload.
 ///
-/// Two shapes are accepted. `/api/uploads/<single safe component>` is the
-/// invariant the filesystem sinks depend on. Any `http(s)` URL is accepted
-/// because `documents.file_url` is a free-text field in the current UI and
-/// tenants legitimately point it at links that are not local uploads; rejecting
-/// every *other* scheme is what closes the stored-XSS variant, where a
-/// `javascript:` value is rendered straight into an `href`.
+/// Two shapes are accepted: `/api/uploads/<single safe component>` or an explicit
+/// `https://` URL (e.g., for external documents). Rejecting `http://`, `javascript:`,
+/// `data:`, and all other schemes blocks cleartext downgrade and stored XSS.
 pub fn validate_file_url(file_url: &str) -> AppResult<()> {
     if let Some(name) = file_url.strip_prefix(UPLOAD_URL_PREFIX) {
         sanitize_stored_name(name)?;
         return Ok(());
     }
-    if has_http_scheme(file_url) {
+    if has_https_scheme(file_url) {
         return Ok(());
     }
     Err(AppError::BadRequest(
-        "File URL must be an uploaded file (/api/uploads/<name>) or an http(s) link".into(),
+        "File URL must be an uploaded file (/api/uploads/<name>) or an https:// link".into(),
     ))
 }
 
@@ -141,11 +138,27 @@ pub fn validate_optional_file_url(file_url: Option<&str>) -> AppResult<()> {
     file_url.map_or(Ok(()), validate_file_url)
 }
 
-/// Scheme match is case-insensitive: `HTTPS://…` is as safe as `https://…`, and
-/// treating it as unsafe would only reject valid tenant data.
-fn has_http_scheme(url: &str) -> bool {
-    let lower = url.to_ascii_lowercase();
-    lower.starts_with("https://") || lower.starts_with("http://")
+/// Strict write-time gate for claim receipts and leave attachments: only managed
+/// local uploads (`/api/uploads/<single safe component>`) are accepted, preventing
+/// arbitrary external links or tracking URLs from entering these attachment fields.
+pub fn validate_managed_upload_url(file_url: &str) -> AppResult<()> {
+    if let Some(name) = file_url.strip_prefix(UPLOAD_URL_PREFIX) {
+        sanitize_stored_name(name)?;
+        return Ok(());
+    }
+    Err(AppError::BadRequest(
+        "Attachment must be an uploaded file (/api/uploads/<name>)".into(),
+    ))
+}
+
+/// Nullable variant of [`validate_managed_upload_url`].
+pub fn validate_optional_managed_upload_url(file_url: Option<&str>) -> AppResult<()> {
+    file_url.map_or(Ok(()), validate_managed_upload_url)
+}
+
+/// Scheme match is case-insensitive: `HTTPS://…` is as safe as `https://…`.
+fn has_https_scheme(url: &str) -> bool {
+    url.to_ascii_lowercase().starts_with("https://")
 }
 
 #[cfg(test)]
@@ -226,7 +239,6 @@ mod tests {
     fn validate_file_url_accepts_the_two_supported_shapes() {
         assert!(validate_file_url("/api/uploads/a.pdf").is_ok());
         assert!(validate_file_url("https://example.com/handbook.pdf").is_ok());
-        assert!(validate_file_url("http://intranet.local/handbook.pdf").is_ok());
         assert!(validate_file_url("HTTPS://Example.com/handbook.pdf").is_ok());
     }
 
@@ -237,6 +249,7 @@ mod tests {
             "/api/uploads/../../app/.env",
             "/api/uploads/",
             "/uploads/document.pdf",
+            "http://intranet.local/handbook.pdf",
             "javascript:alert(1)",
             "JavaScript:alert(1)",
             "data:text/html,<script>alert(1)</script>",
@@ -255,6 +268,15 @@ mod tests {
         assert!(validate_optional_file_url(None).is_ok());
         assert!(validate_optional_file_url(Some("/api/uploads/a.pdf")).is_ok());
         assert!(validate_optional_file_url(Some("/api/uploads/../x")).is_err());
+    }
+
+    #[test]
+    fn optional_managed_upload_url_accepts_only_safe_uploads_or_none() {
+        assert!(validate_optional_managed_upload_url(None).is_ok());
+        assert!(validate_optional_managed_upload_url(Some("/api/uploads/a.pdf")).is_ok());
+        assert!(validate_optional_managed_upload_url(Some("https://example.com/a.pdf")).is_err());
+        assert!(validate_optional_managed_upload_url(Some("http://example.com/a.pdf")).is_err());
+        assert!(validate_optional_managed_upload_url(Some("/api/uploads/../x")).is_err());
     }
 
     #[test]

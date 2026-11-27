@@ -24,7 +24,9 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock('@/api/client', () => ({
   default: { get: apiMocks.get, post: apiMocks.post, put: apiMocks.put },
   setAccessToken: apiMocks.setAccessToken,
+  setAuthIdentity: vi.fn(),
   onAuthRefreshed: vi.fn(() => () => {}),
+  onAuthIdentityChanged: vi.fn(() => () => {}),
 }));
 
 const createCredential = vi.fn();

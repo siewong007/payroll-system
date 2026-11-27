@@ -60,6 +60,25 @@ pub async fn find_unused_legacy(
     Ok(rows)
 }
 
+/// Scans every unused backup code for a user regardless of lookup-hash key
+/// (up to 10 rows per account), ensuring key rotation of `TOTP_ENCRYPTION_KEY`
+/// never breaks existing backup codes.
+pub async fn find_all_unused_for_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<Vec<TotpBackupCode>> {
+    let rows = sqlx::query_as!(
+        TotpBackupCode,
+        "SELECT id, user_id, code_hash, code_lookup_hash, used_at, created_at
+         FROM user_totp_backup_codes
+         WHERE user_id = $1 AND used_at IS NULL",
+        user_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
 pub async fn mark_used(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,

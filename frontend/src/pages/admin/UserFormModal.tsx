@@ -110,13 +110,21 @@ export function UserFormModal({
   const originalCompanyIds = user?.companies.map((company) => company.id) ?? [];
   const companiesChanged = !isCreate && !sameIdSet(form.company_ids, originalCompanyIds);
   const rolesChanged = !isCreate && !sameIdSet(form.roles, user?.roles ?? []);
+  const emailChanged =
+    !isCreate && form.email.trim().toLowerCase() !== (user?.email ?? '').trim().toLowerCase();
+  const isActiveChanged = !isCreate && form.is_active !== (user?.is_active ?? true);
   const targetIsPrivileged = form.roles.some((role) => role === 'super_admin' || role === 'admin');
   const existingIsPrivileged = Boolean(
     !isCreate && user?.roles.some((role) => role === 'super_admin' || role === 'admin'),
   );
   const requiresStepUp = isCreate
-    ? targetIsPrivileged
-    : existingIsPrivileged || targetIsPrivileged || rolesChanged || companiesChanged;
+    ? true
+    : existingIsPrivileged ||
+      targetIsPrivileged ||
+      rolesChanged ||
+      companiesChanged ||
+      emailChanged ||
+      isActiveChanged;
   const deactivating = !isCreate && !form.is_active && user?.is_active !== false;
   const willRevokeSessions = companiesChanged || rolesChanged || deactivating;
 

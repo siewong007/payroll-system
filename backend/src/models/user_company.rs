@@ -154,3 +154,23 @@ impl std::fmt::Debug for UpdateUserRequest {
 pub struct SwitchCompanyRequest {
     pub company_id: Uuid,
 }
+
+#[derive(Deserialize, Validate)]
+pub struct StepUpConfirmRequest {
+    #[validate(length(min = 1, message = "Current password confirmation is required"))]
+    pub actor_password: String,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for StepUpConfirmRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StepUpConfirmRequest")
+            .field("actor_password", &"***")
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
+}

@@ -30,7 +30,8 @@ pub async fn get_by_id(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at,
-            failed_login_attempts, login_locked_until
+            failed_login_attempts, login_locked_until,
+            step_up_failed_attempts, step_up_locked_until
         FROM users WHERE id = $1"#,
         id,
     )
@@ -47,7 +48,8 @@ pub async fn get_active_by_id(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at,
-            failed_login_attempts, login_locked_until
+            failed_login_attempts, login_locked_until,
+            step_up_failed_attempts, step_up_locked_until
         FROM users WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
         id,
     )
@@ -64,7 +66,8 @@ pub async fn find_active_by_email(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at,
-            failed_login_attempts, login_locked_until
+            failed_login_attempts, login_locked_until,
+            step_up_failed_attempts, step_up_locked_until
         FROM users WHERE lower(btrim(email)) = lower(btrim($1)) AND is_active = TRUE AND deleted_at IS NULL"#,
         email,
     )
@@ -822,4 +825,86 @@ pub async fn clear_failed_password_logins(
     .execute(executor)
     .await?;
     Ok(())
+}
+
+/// Increment consecutive step-up password failures and lock step-up confirmations
+/// for `lock_minutes` once `max_attempts` is reached. Expired lock windows reset to 1.
+pub async fn record_failed_step_up_password(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    max_attempts: i32,
+    lock_minutes: i64,
+) -> AppResult<i32> {
+    let attempts = sqlx::query_scalar!(
+        r#"UPDATE users
+           SET step_up_failed_attempts = CASE
+                   WHEN step_up_locked_until IS NOT NULL AND step_up_locked_until <= NOW() THEN 1
+                   ELSE step_up_failed_attempts + 1
+               END,
+               step_up_locked_until = CASE
+                   WHEN step_up_locked_until IS NOT NULL AND step_up_locked_until <= NOW() THEN
+                       CASE WHEN 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute') ELSE NULL END
+                   WHEN step_up_failed_attempts + 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute')
+                   ELSE step_up_locked_until
+               END,
+               updated_at = NOW()
+           WHERE id = $1
+           RETURNING step_up_failed_attempts"#,
+        user_id,
+        max_attempts,
+        lock_minutes as f64,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(attempts)
+}
+
+/// Clear step-up password failure counters after a verified confirmation.
+pub async fn clear_failed_step_up_passwords(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE users
+           SET step_up_failed_attempts = 0,
+               step_up_locked_until = NULL,
+               updated_at = NOW()
+           WHERE id = $1
+             AND (step_up_failed_attempts <> 0 OR step_up_locked_until IS NOT NULL)"#,
+        user_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Batch lookup of normalized email addresses across all users (case/whitespace insensitive).
+pub async fn find_existing_normalized_emails(
+    executor: impl Executor<'_, Database = Postgres>,
+    normalized_emails: &[String],
+) -> AppResult<std::collections::HashSet<String>> {
+    if normalized_emails.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let rows = sqlx::query_scalar!(
+        r#"SELECT lower(btrim(email)) AS "email!"
+           FROM users
+           WHERE lower(btrim(email)) = ANY($1)"#,
+        normalized_emails,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Set of user IDs holding any privileged platform role (`admin` or `super_admin`).
+pub async fn privileged_user_ids(
+    executor: impl Executor<'_, Database = Postgres>,
+) -> AppResult<std::collections::HashSet<Uuid>> {
+    let ids = sqlx::query_scalar!(
+        r#"SELECT id FROM users WHERE roles && ARRAY['admin', 'super_admin']::varchar[]"#
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(ids.into_iter().collect())
 }

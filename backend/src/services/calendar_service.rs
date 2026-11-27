@@ -286,10 +286,16 @@ pub async fn import_from_ics(
 }
 
 const MAX_ICS_EVENTS: usize = 500;
+const MAX_ICS_LINES: usize = 20_000;
 
-fn unfold_ics_lines(ics_text: &str) -> Vec<String> {
+fn unfold_ics_lines(ics_text: &str) -> AppResult<Vec<String>> {
     let mut unfolded: Vec<String> = Vec::new();
-    for raw_line in ics_text.lines() {
+    for (idx, raw_line) in ics_text.lines().enumerate() {
+        if idx >= MAX_ICS_LINES {
+            return Err(AppError::BadRequest(format!(
+                "Calendar contains more than the maximum of {MAX_ICS_LINES} lines."
+            )));
+        }
         let line = raw_line.trim_end_matches('\r');
         if let Some(rest) = line.strip_prefix(' ').or_else(|| line.strip_prefix('\t'))
             && let Some(last) = unfolded.last_mut()
@@ -299,7 +305,7 @@ fn unfold_ics_lines(ics_text: &str) -> Vec<String> {
         }
         unfolded.push(line.to_string());
     }
-    unfolded
+    Ok(unfolded)
 }
 
 fn parse_ics_date(val: &str) -> Option<NaiveDate> {
@@ -327,7 +333,7 @@ pub async fn import_from_ics_text(
     let mut date: Option<NaiveDate> = None;
     let mut description: Option<String> = None;
 
-    for raw_line in unfold_ics_lines(ics_text) {
+    for raw_line in unfold_ics_lines(ics_text)? {
         let line = raw_line.trim();
         if line == "BEGIN:VEVENT" {
             event_count += 1;

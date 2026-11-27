@@ -126,4 +126,5 @@ pub struct TemplateQuery {
 pub(crate) struct ExistingEmployees {
     pub(crate) employee_numbers: HashSet<String>,
     pub(crate) ic_numbers: HashSet<String>,
+    pub(crate) emails: HashSet<String>,
 }

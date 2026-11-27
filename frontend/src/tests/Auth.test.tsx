@@ -18,7 +18,9 @@ vi.mock('@/api/client', () => ({
     put: apiMocks.put,
   },
   setAccessToken: apiMocks.setAccessToken,
+  setAuthIdentity: vi.fn(),
   onAuthRefreshed: vi.fn(() => () => {}),
+  onAuthIdentityChanged: vi.fn(() => () => {}),
 }));
 
 const user: User = {
@@ -145,7 +147,7 @@ describe('AuthProvider', () => {
 
     await act(async () => result.current.logout());
 
-    expect(apiMocks.post).toHaveBeenCalledWith('/auth/logout');
+    expect(apiMocks.post).toHaveBeenCalledWith('/auth/logout', {});
     expect(apiMocks.setAccessToken).toHaveBeenLastCalledWith(null);
     expect(result.current.user).toBeNull();
     expect(result.current.token).toBeNull();
@@ -173,5 +175,24 @@ describe('AuthProvider', () => {
     expect(removeQueries).toHaveBeenCalledOnce();
     expect(invalidateQueries).toHaveBeenCalledOnce();
     expect(JSON.parse(localStorage.getItem('user') ?? 'null')).toEqual(switchedUser);
+    expect(apiMocks.setAccessToken.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      removeQueries.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('clears session and query cache when another tab removes localStorage.user', async () => {
+    const { result, queryClient } = renderAuth();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    act(() => result.current.setSession('tab-1-token', user));
+    queryClient.setQueryData(['my-payslips'], [{ id: 'p-1' }]);
+
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'user', newValue: null }));
+    });
+
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(false));
+    expect(result.current.user).toBeNull();
+    expect(apiMocks.setAccessToken).toHaveBeenLastCalledWith(null);
+    expect(queryClient.getQueryData(['my-payslips'])).toBeUndefined();
   });
 });

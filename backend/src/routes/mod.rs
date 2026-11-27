@@ -121,14 +121,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/2fa/verify", post(totp::verify_login))
         .route("/auth/passkey/check", post(passkey::check_passkey))
         .route(
-            "/auth/passkey/authenticate/begin",
-            post(passkey::authentication_begin),
-        )
-        .route(
-            "/auth/passkey/authenticate/complete",
-            post(passkey::authentication_complete),
-        )
-        .route(
             "/auth/passkey/discoverable/begin",
             post(passkey::discoverable_auth_begin),
         )
@@ -139,7 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         .layer(GovernorLayer::new(auth_rate_limit.clone()))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
+            HeaderValue::from_static("no-store, no-transform"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::PRAGMA,
@@ -151,7 +143,7 @@ pub fn create_router(state: AppState) -> Router {
         .layer(GovernorLayer::new(forgot_rate_limit.clone()))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
+            HeaderValue::from_static("no-store, no-transform"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::PRAGMA,
@@ -167,7 +159,7 @@ pub fn create_router(state: AppState) -> Router {
         .layer(GovernorLayer::new(oauth2_rate_limit.clone()))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
+            HeaderValue::from_static("no-store, no-transform"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::PRAGMA,
@@ -176,7 +168,15 @@ pub fn create_router(state: AppState) -> Router {
 
     let rate_limited_kiosk = Router::new()
         .route("/attendance/kiosk/qr", post(attendance::kiosk_qr))
-        .layer(GovernorLayer::new(kiosk_rate_limit.clone()));
+        .layer(GovernorLayer::new(kiosk_rate_limit.clone()))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-transform"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
 
     let rate_limited_health = Router::new()
         .route("/health/ready", get(health::ready))
@@ -229,24 +229,41 @@ pub fn create_router(state: AppState) -> Router {
             .expect("Failed to build heavy job rate limiter"),
     );
 
-    // Uploads: 10 MB apiece into the API container's local disk, with no quota
-    // behind them.
+    // Uploads: 10 MB apiece into the API container's local disk, bounded by per-user/tenant quotas.
     let upload_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
             .key_extractor(session_key.clone())
-            .per_second(4)
-            .burst_size(10)
+            .per_second(10)
+            .burst_size(6)
             .finish()
             .expect("Failed to build upload rate limiter"),
     );
 
     let import_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
-            .key_extractor(session_key)
+            .key_extractor(session_key.clone())
             .per_second(6)
             .burst_size(15)
             .finish()
             .expect("Failed to build import rate limiter"),
+    );
+
+    let export_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(session_key.clone())
+            .per_second(6)
+            .burst_size(10)
+            .finish()
+            .expect("Failed to build export rate limiter"),
+    );
+
+    let claims_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(session_key)
+            .per_second(3)
+            .burst_size(20)
+            .finish()
+            .expect("Failed to build claims rate limiter"),
     );
 
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -263,6 +280,8 @@ pub fn create_router(state: AppState) -> Router {
             Arc::downgrade(&heavy_job_rate_limit),
             Arc::downgrade(&upload_rate_limit),
             Arc::downgrade(&import_rate_limit),
+            Arc::downgrade(&export_rate_limit),
+            Arc::downgrade(&claims_rate_limit),
         ];
         handle.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -322,7 +341,7 @@ pub fn create_router(state: AppState) -> Router {
         .layer(GovernorLayer::new(session_auth_rate_limit.clone()))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
+            HeaderValue::from_static("no-store, no-transform"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::PRAGMA,
@@ -336,6 +355,10 @@ pub fn create_router(state: AppState) -> Router {
             post(notification::upsert_subscription).delete(notification::delete_subscription),
         )
         .route("/notifications/test-push", post(notification::test_push))
+        .route(
+            "/attendance/qr/generate",
+            post(attendance::generate_qr_token),
+        )
         .route("/attendance/check-in/qr", post(attendance::check_in_qr))
         .route(
             "/attendance/check-in/face-id/begin",
@@ -346,7 +369,72 @@ pub fn create_router(state: AppState) -> Router {
             post(attendance::check_in_face_id),
         )
         .route("/attendance/check-out", post(attendance::check_out))
-        .layer(GovernorLayer::new(session_auth_rate_limit));
+        .layer(GovernorLayer::new(session_auth_rate_limit.clone()))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-transform"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
+
+    let rate_limited_admin_step_up = Router::new()
+        .route(
+            "/user-groups",
+            get(user_group::list_groups).post(user_group::create_group),
+        )
+        .route(
+            "/user-groups/{id}",
+            get(user_group::get_group)
+                .put(user_group::update_group)
+                .delete(user_group::delete_group),
+        )
+        .route(
+            "/user-groups/{id}/members",
+            get(user_group::list_members).post(user_group::add_member),
+        )
+        .route(
+            "/admin/companies",
+            get(admin::list_companies).post(admin::create_company),
+        )
+        .route(
+            "/admin/companies/{id}",
+            put(admin::update_company).delete(admin::delete_company),
+        )
+        .route(
+            "/admin/users",
+            get(admin::list_users).post(admin::create_user),
+        )
+        .route(
+            "/admin/users/{id}",
+            put(admin::update_user).delete(admin::delete_user),
+        )
+        .route(
+            "/admin/platform/2fa-policy",
+            get(admin::get_2fa_policy).put(admin::set_2fa_policy),
+        )
+        .route(
+            "/admin/platform/attendance-method",
+            get(attendance::get_platform_method).put(attendance::set_platform_method),
+        )
+        .route(
+            "/attendance/kiosks",
+            get(attendance::list_kiosk_credentials).post(attendance::create_kiosk_credential),
+        )
+        .route(
+            "/attendance/kiosks/{id}",
+            delete(attendance::revoke_kiosk_credential),
+        )
+        .layer(GovernorLayer::new(session_auth_rate_limit))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-transform"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
 
     let auth_unthrottled = Router::new()
         .route("/auth/me", get(auth::me))
@@ -362,7 +450,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/oauth2/accounts", get(oauth2::my_linked_accounts))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
+            HeaderValue::from_static("no-store, no-transform"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::PRAGMA,
@@ -373,6 +461,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/email/send", post(email::send_letter))
         .layer(GovernorLayer::new(email_rate_limit));
 
+    let rate_limited_claims = Router::new()
+        .route(
+            "/portal/claims",
+            get(portal::list_claims).post(portal::create_claim),
+        )
+        .layer(GovernorLayer::new(claims_rate_limit));
+
     let rate_limited_heavy = Router::new()
         .route("/payroll/run", post(payroll::process))
         .route("/payroll/preview", post(payroll::preview))
@@ -380,7 +475,6 @@ pub fn create_router(state: AppState) -> Router {
             "/employees/import/confirm",
             post(employee_import::confirm_import),
         )
-        .route("/admin/backup/export", get(backup::export_company))
         // The limit goes on the `MethodRouter`, not on the merged sub-router:
         // hung on the sub-router it would also raise the ceiling on
         // `/payroll/run` and `/payroll/preview`, which take small JSON bodies.
@@ -390,6 +484,42 @@ pub fn create_router(state: AppState) -> Router {
                 .layer(DefaultBodyLimit::max(backup::BACKUP_REQUEST_MAX_BYTES)),
         )
         .layer(GovernorLayer::new(heavy_job_rate_limit));
+
+    let rate_limited_exports = Router::new()
+        .route("/admin/backup/export", post(backup::export_company))
+        .route(
+            "/employees/import/template",
+            get(employee_import::download_template),
+        )
+        .route("/uploads/{filename}", get(portal::serve_upload))
+        .route("/portal/leave/export-ics", get(portal::export_leave_ics))
+        .route(
+            "/portal/payslips/{id}/pdf",
+            get(portal::download_payslip_pdf),
+        )
+        .route(
+            "/payroll/runs/{run_id}/payslips/pdf",
+            get(payroll::download_run_payslips_pdf),
+        )
+        .route("/reports/statutory/epf-export", get(report::export_epf))
+        .route("/reports/statutory/socso-export", get(report::export_socso))
+        .route("/reports/statutory/eis-export", get(report::export_eis))
+        .route("/reports/statutory/pcb-export", get(report::export_pcb))
+        .route("/reports/ea-form", get(report::get_ea_form))
+        .route("/attendance/export", get(attendance::export_attendance))
+        .layer(GovernorLayer::new(export_rate_limit))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, private, no-transform"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ));
 
     let rate_limited_uploads = Router::new()
         .route(
@@ -425,53 +555,20 @@ pub fn create_router(state: AppState) -> Router {
         .merge(rate_limited_kiosk)
         .merge(rate_limited_session_auth_only)
         .merge(rate_limited_session_ops)
+        .merge(rate_limited_admin_step_up)
+        .merge(rate_limited_claims)
         .merge(rate_limited_email)
         .merge(rate_limited_heavy)
+        .merge(rate_limited_exports)
         .merge(rate_limited_uploads)
         .merge(rate_limited_imports)
         .merge(auth_unthrottled)
-        // User groups: company-scoped permission bundles layered on top of roles.
-        .route(
-            "/user-groups",
-            get(user_group::list_groups).post(user_group::create_group),
-        )
-        .route(
-            "/user-groups/{id}",
-            get(user_group::get_group)
-                .put(user_group::update_group)
-                .delete(user_group::delete_group),
-        )
-        .route(
-            "/user-groups/{id}/members",
-            get(user_group::list_members).post(user_group::add_member),
-        )
+        // User groups member removal
         .route(
             "/user-groups/{group_id}/members/{user_id}",
             delete(user_group::remove_member),
         )
-        // Admin (super_admin)
-        .route(
-            "/admin/companies",
-            get(admin::list_companies).post(admin::create_company),
-        )
-        .route(
-            "/admin/companies/{id}",
-            put(admin::update_company).delete(admin::delete_company),
-        )
-        .route(
-            "/admin/users",
-            get(admin::list_users).post(admin::create_user),
-        )
-        .route(
-            "/admin/users/{id}",
-            put(admin::update_user).delete(admin::delete_user),
-        )
-        // Platform 2FA enforcement policy (ManagePlatformSettings): the
-        // switch plus the privileged accounts it would refuse at login.
-        .route(
-            "/admin/platform/2fa-policy",
-            get(admin::get_2fa_policy).put(admin::set_2fa_policy),
-        )
+        // Platform health
         .route("/admin/platform/health", get(admin::get_platform_health))
         // Employees
         .route("/employees", get(employee::list).post(employee::create))
@@ -486,11 +583,6 @@ pub fn create_router(state: AppState) -> Router {
             get(employee::salary_history),
         )
         .route("/employees/{id}/tp3", post(employee::create_tp3))
-        // Employee Import (/validate and /confirm are rate-limited above)
-        .route(
-            "/employees/import/template",
-            get(employee_import::download_template),
-        )
         // Payroll Groups
         .route("/payroll-groups", get(payroll::list_groups))
         // Payroll Runs (/payroll/run and /payroll/preview are rate-limited above)
@@ -584,10 +676,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/portal/team-calendar", get(portal::team_calendar))
         .route("/portal/holidays", get(portal::portal_holidays))
         .route("/portal/working-days", get(portal::portal_working_days))
-        .route(
-            "/portal/claims",
-            get(portal::list_claims).post(portal::create_claim),
-        )
         .route("/portal/claims/{id}/submit", put(portal::submit_claim))
         .route("/portal/claims/{id}/cancel", put(portal::cancel_claim))
         .route("/portal/claims/{id}", delete(portal::delete_claim))
@@ -598,8 +686,6 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/portal/overtime/{id}/cancel", put(portal::cancel_overtime))
         .route("/portal/overtime/{id}", delete(portal::delete_overtime))
-        // POST /uploads is rate-limited above (with the raised body limit).
-        .route("/uploads/{filename}", get(portal::serve_upload))
         // Dashboard
         .route("/dashboard/summary", get(dashboard::summary))
         // Notifications
@@ -729,31 +815,9 @@ pub fn create_router(state: AppState) -> Router {
             post(employee::initialize_balances),
         )
         .route("/leave/year-end", post(employee::process_carry_forward))
-        // Portal: leave ICS export & payslip PDF
-        .route("/portal/leave/export-ics", get(portal::export_leave_ics))
-        .route(
-            "/portal/payslips/{id}/pdf",
-            get(portal::download_payslip_pdf),
-        )
-        // Payroll: bulk payslip PDF
-        .route(
-            "/payroll/runs/{run_id}/payslips/pdf",
-            get(payroll::download_run_payslips_pdf),
-        )
-        // Statutory file exports
-        .route("/reports/statutory/epf-export", get(report::export_epf))
-        .route("/reports/statutory/socso-export", get(report::export_socso))
-        .route("/reports/statutory/eis-export", get(report::export_eis))
-        .route("/reports/statutory/pcb-export", get(report::export_pcb))
-        // EA Form
+        // EA Form employee selector
         .route("/reports/ea-form/employees", get(report::list_ea_employees))
-        .route("/reports/ea-form", get(report::get_ea_form))
         // ─── Attendance ───
-        // Platform method control (super_admin only)
-        .route(
-            "/admin/platform/attendance-method",
-            get(attendance::get_platform_method).put(attendance::set_platform_method),
-        )
         // Effective method for caller's company (any auth)
         .route("/attendance/method", get(attendance::get_attendance_method))
         // Company-level override (admin)
@@ -761,27 +825,11 @@ pub fn create_router(state: AppState) -> Router {
             "/attendance/company-method",
             put(attendance::set_company_method),
         )
-        // QR token generation (admin/hr_manager)
-        .route(
-            "/attendance/qr/generate",
-            post(attendance::generate_qr_token),
-        )
-        // Kiosk credentials (admin) — list/create + revoke. The public endpoint
-        // /attendance/kiosk/qr lives in `rate_limited_kiosk` above.
-        .route(
-            "/attendance/kiosks",
-            get(attendance::list_kiosk_credentials).post(attendance::create_kiosk_credential),
-        )
-        .route(
-            "/attendance/kiosks/{id}",
-            delete(attendance::revoke_kiosk_credential),
-        )
         // Employee portal (check-in/out routes rate-limited above)
         .route("/attendance/my/today", get(attendance::my_today))
         .route("/attendance/my", get(attendance::my_attendance))
-        // Summary & export (admin)
+        // Summary (admin; CSV export is in rate_limited_exports above)
         .route("/attendance/summary", get(attendance::attendance_summary))
-        .route("/attendance/export", get(attendance::export_attendance))
         // Admin management
         .route("/attendance/records", get(attendance::list_attendance))
         .route(

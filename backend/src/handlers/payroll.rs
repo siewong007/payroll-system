@@ -116,6 +116,24 @@ pub async fn get_payslip_breakdown(
     ))
 }
 
+fn mask_payroll_run_privileged_actors(
+    run: &mut PayrollRun,
+    priv_ids: &std::collections::HashSet<Uuid>,
+) {
+    let mask = |field: &mut Option<Uuid>| {
+        if field.is_some_and(|id| priv_ids.contains(&id)) {
+            *field = None;
+        }
+    };
+    mask(&mut run.processed_by);
+    mask(&mut run.submitted_by);
+    mask(&mut run.approved_by);
+    mask(&mut run.locked_by);
+    mask(&mut run.cancelled_by);
+    mask(&mut run.created_by);
+    mask(&mut run.updated_by);
+}
+
 pub async fn list_runs(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -126,7 +144,13 @@ pub async fn list_runs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let runs = payroll_service::list_runs(&state.pool, company_id).await?;
+    let mut runs = payroll_service::list_runs(&state.pool, company_id).await?;
+    if crate::services::user_service::hides_privileged_users(&auth) {
+        let priv_ids = crate::repositories::users::privileged_user_ids(&state.pool).await?;
+        for run in &mut runs {
+            mask_payroll_run_privileged_actors(run, &priv_ids);
+        }
+    }
 
     Ok(Json(runs))
 }
@@ -142,9 +166,13 @@ pub async fn get_run(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    Ok(Json(
-        payroll_service::get_summary(&state.pool, company_id, id).await?,
-    ))
+    let mut summary = payroll_service::get_summary(&state.pool, company_id, id).await?;
+    if crate::services::user_service::hides_privileged_users(&auth) {
+        let priv_ids = crate::repositories::users::privileged_user_ids(&state.pool).await?;
+        mask_payroll_run_privileged_actors(&mut summary.payroll_run, &priv_ids);
+    }
+
+    Ok(Json(summary))
 }
 
 pub async fn list_run_audit_logs(
@@ -159,12 +187,19 @@ pub async fn list_run_audit_logs(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let hide_privileged = crate::services::user_service::hides_privileged_users(&auth);
+    let priv_ids = if hide_privileged {
+        Some(crate::repositories::users::privileged_user_ids(&state.pool).await?)
+    } else {
+        None
+    };
     let mut logs =
         payroll_service::list_run_audit_logs(&state.pool, company_id, id, hide_privileged).await?;
     crate::services::audit_service::redact_audit_logs(
         &mut logs,
         false,
         !auth.can(Permission::ManageEmployees),
+        !auth.can(Permission::ViewEmailLogs),
+        priv_ids.as_ref(),
     );
 
     Ok(Json(logs))
@@ -437,7 +472,7 @@ pub async fn download_run_payslips_pdf(
     )
     .await?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/pdf")
         .header(
@@ -445,7 +480,7 @@ pub async fn download_run_payslips_pdf(
             "attachment; filename=\"payslips.pdf\"",
         )
         .body(Body::from(bytes))
-        .unwrap())
+        .map_err(|e| AppError::Internal(format!("Response error: {e}")))
 }
 
 pub async fn get_items(

@@ -28,7 +28,7 @@ export function useAuthorizedFile(url: string | null | undefined): AuthorizedFil
     }
 
     if (!isManagedUploadUrl(url)) {
-      if (/^https?:\/\//i.test(url)) {
+      if (/^https:\/\//i.test(url)) {
         setState({ status: 'ready', href: url });
       } else {
         setState({ status: 'error' });

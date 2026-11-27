@@ -745,21 +745,36 @@ async fn export_route_writes_an_audit_row() {
     use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt;
 
-    use crate::tests::route_auth_tests::{app_for, token_for};
+    use crate::services::auth_service;
+    use crate::tests::route_auth_tests::{app_for, token_and_user_for};
 
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
     let company_id = seed_company(&pool).await;
-    let token = token_for(&pool, company_id, "super_admin").await;
+    let (token, user_id) = token_and_user_for(&pool, company_id, "super_admin").await;
+    let password_hash = auth_service::hash_password("BackupExportPass1!")
+        .await
+        .expect("hash password");
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&password_hash)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("set super_admin password");
 
+    let body = serde_json::json!({
+        "company_id": company_id,
+        "actor_password": "BackupExportPass1!",
+    });
     let mut request = Request::builder()
-        .method("GET")
-        .uri(format!("/api/admin/backup/export?company_id={company_id}"))
+        .method("POST")
+        .uri("/api/admin/backup/export")
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
         .header("x-forwarded-for", "203.0.113.10, 10.0.0.1")
         .header(header::USER_AGENT, "BackupAuditTest/1.0")
-        .body(Body::empty())
+        .body(Body::from(body.to_string()))
         .expect("build request");
     request
         .extensions_mut()

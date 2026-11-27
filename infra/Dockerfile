@@ -40,10 +40,13 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/payroll-system ./payroll-system
 
-# Run as a non-root user with no login shell. The app writes uploads under /app/uploads at runtime.
+# Run as a non-root user with no login shell. Keep binary root-owned and read-only;
+# only /app/uploads is writable by uid 10001 at runtime.
 RUN useradd --system --uid 10001 --home-dir /app --no-create-home --shell /usr/sbin/nologin appuser \
+    && chown root:root /app ./payroll-system \
+    && chmod 0555 ./payroll-system \
     && mkdir -p /app/uploads \
-    && chown -R 10001:10001 /app \
+    && chown 10001:10001 /app/uploads \
     && chmod 0750 /app/uploads
 USER 10001
 

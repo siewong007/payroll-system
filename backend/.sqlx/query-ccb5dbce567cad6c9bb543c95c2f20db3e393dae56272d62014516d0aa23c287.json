@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, password_hash, full_name, roles, company_id,\n            employee_id, is_active, must_change_password, last_login, created_at, updated_at,\n            failed_login_attempts, login_locked_until\n        FROM users WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL",
+  "query": "SELECT u.id, u.email, u.password_hash, u.full_name, u.roles, u.company_id,\n            u.employee_id, u.is_active, u.must_change_password, u.last_login, u.created_at, u.updated_at,\n            u.failed_login_attempts, u.login_locked_until,\n            u.step_up_failed_attempts, u.step_up_locked_until\n        FROM users u\n        JOIN oauth2_accounts oa ON u.id = oa.user_id\n        WHERE oa.provider = $1 AND oa.provider_user_id = $2 AND u.is_active = TRUE AND u.deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -156,11 +156,34 @@
             "name": "login_locked_until"
           }
         }
+      },
+      {
+        "ordinal": 14,
+        "name": "step_up_failed_attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "step_up_failed_attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "step_up_locked_until",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "step_up_locked_until"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
@@ -177,8 +200,10 @@
       false,
       false,
       false,
+      true,
+      false,
       true
     ]
   },
-  "hash": "1e503e79a83bd6b3c32730922d2af0e81b0667e263b182a1f88637f0cc2d84ab"
+  "hash": "ccb5dbce567cad6c9bb543c95c2f20db3e393dae56272d62014516d0aa23c287"
 }

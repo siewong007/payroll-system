@@ -66,6 +66,11 @@ export interface UserWithCompanies {
   companies: CompanySummary[];
 }
 
+export interface StepUpCredentials {
+  actor_password: string;
+  actor_totp_code?: string;
+}
+
 export interface CreateUserRequest {
   email: string;
   password: string;

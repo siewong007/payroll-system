@@ -225,6 +225,7 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
 
 async fn load_existing(pool: &PgPool, company_id: Uuid) -> AppResult<ExistingEmployees> {
     let rows = employee_repo::existing_numbers_and_ics(pool, company_id).await?;
+    let email_rows = employee_repo::existing_normalized_emails(pool, company_id).await?;
 
     let mut employee_numbers = HashSet::new();
     let mut ic_numbers = HashSet::new();
@@ -236,10 +237,12 @@ async fn load_existing(pool: &PgPool, company_id: Uuid) -> AppResult<ExistingEmp
             ic_numbers.insert(ic.to_lowercase());
         }
     }
+    let emails: HashSet<String> = email_rows.into_iter().collect();
 
     Ok(ExistingEmployees {
         employee_numbers,
         ic_numbers,
+        emails,
     })
 }
 
@@ -248,6 +251,7 @@ fn check_duplicates(
     existing: &ExistingEmployees,
     seen_emp_numbers: &HashMap<String, usize>,
     seen_ic_numbers: &HashMap<String, usize>,
+    seen_emails: &HashMap<String, usize>,
 ) -> Vec<FieldError> {
     let mut errors = Vec::new();
 
@@ -286,6 +290,28 @@ fn check_duplicates(
                     ic, other_row
                 ),
             });
+        }
+    }
+
+    if let Some(email) = &row.email {
+        let key = email.trim().to_ascii_lowercase();
+        if !key.is_empty() {
+            if existing.emails.contains(&key) {
+                errors.push(FieldError {
+                    field: "email".into(),
+                    message: format!("Email '{}' already exists", email.trim()),
+                });
+            }
+            if let Some(&other_row) = seen_emails.get(&key) {
+                errors.push(FieldError {
+                    field: "email".into(),
+                    message: format!(
+                        "Duplicate email '{}' within file (also on row {})",
+                        email.trim(),
+                        other_row
+                    ),
+                });
+            }
         }
     }
 
@@ -331,6 +357,7 @@ pub async fn validate_file(
     let mut validated_rows = Vec::with_capacity(import_rows.len());
     let mut seen_emp_numbers: HashMap<String, usize> = HashMap::new();
     let mut seen_ic_numbers: HashMap<String, usize> = HashMap::new();
+    let mut seen_emails: HashMap<String, usize> = HashMap::new();
 
     for row in import_rows {
         let mut errors = validate_row(&row);
@@ -343,7 +370,13 @@ pub async fn validate_file(
                 message: format!("Payroll group '{}' does not exist in this company", v),
             });
         }
-        let dup_errors = check_duplicates(&row, &existing, &seen_emp_numbers, &seen_ic_numbers);
+        let dup_errors = check_duplicates(
+            &row,
+            &existing,
+            &seen_emp_numbers,
+            &seen_ic_numbers,
+            &seen_emails,
+        );
 
         if let Some(emp_no) = &row.employee_number {
             seen_emp_numbers
@@ -356,6 +389,12 @@ pub async fn validate_file(
             seen_ic_numbers
                 .entry(ic.to_lowercase())
                 .or_insert(row.row_number);
+        }
+        if let Some(email) = &row.email {
+            let key = email.trim().to_ascii_lowercase();
+            if !key.is_empty() {
+                seen_emails.entry(key).or_insert(row.row_number);
+            }
         }
 
         let status = if !dup_errors.is_empty() {
@@ -454,6 +493,7 @@ mod tests {
         ExistingEmployees {
             employee_numbers: employee_numbers.iter().map(|s| s.to_string()).collect(),
             ic_numbers: ic_numbers.iter().map(|s| s.to_string()).collect(),
+            emails: HashSet::new(),
         }
     }
 
@@ -703,6 +743,7 @@ mod tests {
             &existing(&["e001"], &[]),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         );
 
         assert_eq!(fields(&errors), ["employee_number"]);
@@ -714,6 +755,7 @@ mod tests {
         let errors = check_duplicates(
             &row(json!({ "ic_number": "900101-14-5566" })),
             &existing(&[], &["900101-14-5566"]),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         );
@@ -730,6 +772,7 @@ mod tests {
             &row(json!({ "employee_number": "E001" })),
             &existing(&[], &[]),
             &seen,
+            &HashMap::new(),
             &HashMap::new(),
         );
 
@@ -751,6 +794,7 @@ mod tests {
             &existing(&["e001"], &[]),
             &seen,
             &HashMap::new(),
+            &HashMap::new(),
         );
 
         assert_eq!(fields(&errors), ["employee_number", "employee_number"]);
@@ -763,6 +807,7 @@ mod tests {
             &existing(&["e001"], &["900101-14-5566"]),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         );
 
         assert!(errors.is_empty());
@@ -773,6 +818,7 @@ mod tests {
         let existing = ExistingEmployees {
             employee_numbers: HashSet::new(),
             ic_numbers: HashSet::from([String::new()]),
+            emails: HashSet::new(),
         };
 
         let errors = check_duplicates(
@@ -780,9 +826,37 @@ mod tests {
             &existing,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         );
 
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn flags_normalized_email_duplicates_in_tenant_and_within_file() {
+        let mut existing = existing(&[], &[]);
+        existing.emails.insert("alice@company.test".to_string());
+        let seen_emails = HashMap::from([("bob@company.test".to_string(), 3usize)]);
+
+        let db_dup = check_duplicates(
+            &row(json!({ "employee_number": "E101", "email": " Alice@Company.Test " })),
+            &existing,
+            &HashMap::new(),
+            &HashMap::new(),
+            &seen_emails,
+        );
+        assert_eq!(fields(&db_dup), ["email"]);
+        assert!(db_dup[0].message.contains("already exists"));
+
+        let file_dup = check_duplicates(
+            &row(json!({ "employee_number": "E102", "email": "BOB@company.test" })),
+            &existing,
+            &HashMap::new(),
+            &HashMap::new(),
+            &seen_emails,
+        );
+        assert_eq!(fields(&file_dup), ["email"]);
+        assert!(file_dup[0].message.contains("row 3"));
     }
 
     #[test]

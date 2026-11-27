@@ -344,13 +344,20 @@ describe('kiosk API', () => {
   it('creates and revokes kiosk credentials', async () => {
     apiMocks.post.mockResolvedValue({ data: { secret: 'one-time-secret' } });
 
-    await expect(createKioskCredential('Lobby tablet')).resolves.toEqual({
+    await expect(
+      createKioskCredential('Lobby tablet', { actor_password: 'pw' }),
+    ).resolves.toEqual({
       secret: 'one-time-secret',
     });
-    expect(apiMocks.post).toHaveBeenCalledWith('/attendance/kiosks', { label: 'Lobby tablet' });
+    expect(apiMocks.post).toHaveBeenCalledWith('/attendance/kiosks', {
+      label: 'Lobby tablet',
+      actor_password: 'pw',
+    });
 
-    await expect(revokeKioskCredential('cred-1')).resolves.toBeUndefined();
-    expect(apiMocks.delete).toHaveBeenCalledWith('/attendance/kiosks/cred-1');
+    await expect(revokeKioskCredential('cred-1', { actor_password: 'pw' })).resolves.toBeUndefined();
+    expect(apiMocks.delete).toHaveBeenCalledWith('/attendance/kiosks/cred-1', {
+      data: { actor_password: 'pw' },
+    });
   });
 });
 

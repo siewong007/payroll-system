@@ -5,7 +5,6 @@ use webauthn_rs::prelude::*;
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
 use crate::models::passkey::PasskeyInfo;
-use crate::repositories::reads::passkey as passkey_reads;
 use crate::repositories::{passkey_challenges, passkey_credentials, users};
 use crate::services::audit_service;
 
@@ -205,22 +204,6 @@ pub async fn consume_registration_challenge(
         .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
 }
 
-/// Consume an authentication challenge, returning the targeted user id and WebAuthn state.
-pub async fn take_authentication_challenge(
-    pool: &PgPool,
-    challenge_id: Uuid,
-) -> AppResult<(Uuid, serde_json::Value)> {
-    let consumed = passkey_challenges::consume_authentication(pool, challenge_id)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
-
-    let user_id = consumed
-        .user_id
-        .ok_or_else(|| AppError::Internal("Missing user_id in challenge".into()))?;
-
-    Ok((user_id, consumed.state_json))
-}
-
 /// Consume a discoverable-auth challenge, returning its WebAuthn state.
 pub async fn take_discoverable_challenge(
     pool: &PgPool,
@@ -229,13 +212,4 @@ pub async fn take_discoverable_challenge(
     passkey_challenges::consume_discoverable(pool, challenge_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
-}
-
-// ── Find users with passkeys by email ──────────────────────────────────
-
-pub async fn get_user_id_by_email_with_passkeys(
-    pool: &PgPool,
-    email: &str,
-) -> AppResult<Option<Uuid>> {
-    passkey_reads::user_id_by_email_with_passkeys(pool, email).await
 }

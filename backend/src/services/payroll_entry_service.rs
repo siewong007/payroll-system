@@ -1,3 +1,4 @@
+use rust_decimal::Decimal;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -9,6 +10,7 @@ use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::{employees, payroll_entries};
 use crate::services::audit_service::{self, AuditRequestMeta};
 
+#[allow(clippy::too_many_arguments)]
 fn validate_payroll_entry(
     period_year: i32,
     period_month: i32,
@@ -16,6 +18,8 @@ fn validate_payroll_entry(
     item_type: &str,
     description: &str,
     amount: i64,
+    quantity: Option<Decimal>,
+    rate: Option<i64>,
 ) -> AppResult<()> {
     if !(1..=12).contains(&period_month) {
         return Err(AppError::BadRequest("Payroll month must be 1-12".into()));
@@ -35,7 +39,10 @@ fn validate_payroll_entry(
     if normalized_type.is_empty() {
         return Err(AppError::BadRequest("Item type is required".into()));
     }
-    if matches!(normalized_type.as_str(), "overtime" | "claim_reimbursement") {
+    if matches!(
+        normalized_type.as_str(),
+        "overtime" | "claim_reimbursement" | "unpaid_leave"
+    ) {
         return Err(AppError::BadRequest(format!(
             "Item type '{normalized_type}' is managed automatically by approvals and cannot be created manually"
         )));
@@ -52,13 +59,35 @@ fn validate_payroll_entry(
         )));
     }
 
+    if let Some(qty) = quantity {
+        let max_qty = Decimal::new(99_999_999, 2); // 999_999.99
+        if qty <= Decimal::ZERO || qty > max_qty {
+            return Err(AppError::BadRequest(
+                "Quantity must be greater than 0 and at most 999,999.99".into(),
+            ));
+        }
+    }
+
+    if let Some(r) = rate
+        && !(0..=crate::models::payroll::MAX_MONEY_SEN).contains(&r)
+    {
+        return Err(AppError::BadRequest(format!(
+            "Rate must be between 0 and {} sen",
+            crate::models::payroll::MAX_MONEY_SEN
+        )));
+    }
+
     Ok(())
 }
 
 fn ensure_entry_is_manual(entry: &PayrollEntry) -> AppResult<()> {
+    let normalized_type = entry.item_type.trim().to_ascii_lowercase();
     if entry.overtime_application_id.is_some()
         || entry.leave_request_id.is_some()
-        || matches!(entry.item_type.as_str(), "overtime" | "claim_reimbursement")
+        || matches!(
+            normalized_type.as_str(),
+            "overtime" | "claim_reimbursement" | "unpaid_leave"
+        )
     {
         return Err(AppError::BadRequest(
             "Approval-linked payroll entries are managed by their source request and cannot be edited or deleted directly"
@@ -140,6 +169,8 @@ pub async fn create_entry(
         &req.item_type,
         &req.description,
         req.amount,
+        req.quantity,
+        req.rate,
     )?;
     ensure_employee_in_company(pool, company_id, req.employee_id).await?;
     ensure_not_self_payroll_entry(pool, actor_id, req.employee_id, company_id).await?;
@@ -222,6 +253,8 @@ pub async fn update_entry(
         &item_type,
         &description,
         amount,
+        quantity,
+        rate,
     )?;
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_not_self_payroll_entry(pool, actor_id, current.employee_id, company_id).await?;
@@ -314,7 +347,17 @@ mod tests {
     fn accepts_valid_entries_at_period_boundaries() {
         for (year, month, category) in [(1900, 1, "earning"), (3000, 12, "deduction")] {
             assert!(
-                validate_payroll_entry(year, month, category, "bonus", "Annual bonus", 1).is_ok()
+                validate_payroll_entry(
+                    year,
+                    month,
+                    category,
+                    "bonus",
+                    "Annual bonus",
+                    1,
+                    None,
+                    None
+                )
+                .is_ok()
             );
         }
     }
@@ -329,7 +372,16 @@ mod tests {
             (2026, 7, "reimbursement"),
         ] {
             assert!(matches!(
-                validate_payroll_entry(year, month, category, "bonus", "Annual bonus", 100),
+                validate_payroll_entry(
+                    year,
+                    month,
+                    category,
+                    "bonus",
+                    "Annual bonus",
+                    100,
+                    None,
+                    None
+                ),
                 Err(AppError::BadRequest(_))
             ));
         }
@@ -342,9 +394,19 @@ mod tests {
             ("bonus", "\t", 100),
             ("bonus", "Annual bonus", 0),
             ("bonus", "Annual bonus", -1),
+            ("unpaid_leave", "Fake unpaid leave", 100),
         ] {
             assert!(matches!(
-                validate_payroll_entry(2026, 7, "earning", item_type, description, amount),
+                validate_payroll_entry(
+                    2026,
+                    7,
+                    "earning",
+                    item_type,
+                    description,
+                    amount,
+                    None,
+                    None
+                ),
                 Err(AppError::BadRequest(_))
             ));
         }

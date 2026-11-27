@@ -13,15 +13,16 @@
 set -Eeuo pipefail
 
 readonly APP_DIR=/opt/payroll
-readonly LOG_FILE="$APP_DIR/logs/watchdog.log"
-readonly SECRETS_FILE="$APP_DIR/secrets.env"
+readonly LOG_DIR="$APP_DIR/logs/watchdog"
+readonly LOG_FILE="$LOG_DIR/watchdog.log"
+readonly WATCHDOG_ENV_FILE="$APP_DIR/watchdog.env"
 readonly HEALTH_URL="http://127.0.0.1:8080/api/health/ready"
 
-mkdir -p "$APP_DIR/logs"
+mkdir -p "$LOG_DIR"
 
 ALERT_WEBHOOK_URL=""
-if [[ -r "$SECRETS_FILE" ]]; then
-  raw_webhook_line=$(grep -m1 -E '^[[:space:]]*ALERT_WEBHOOK_URL=' "$SECRETS_FILE" 2>/dev/null || true)
+if [[ -r "$WATCHDOG_ENV_FILE" ]]; then
+  raw_webhook_line=$(grep -m1 -E '^[[:space:]]*ALERT_WEBHOOK_URL=' "$WATCHDOG_ENV_FILE" 2>/dev/null || true)
   if [[ -n "$raw_webhook_line" ]]; then
     raw_webhook=${raw_webhook_line#*=}
     raw_webhook=${raw_webhook%$'\r'}
@@ -88,12 +89,8 @@ if ! ready_json=$(curl -fsS --max-time 10 "$HEALTH_URL" 2>/dev/null); then
 else
   if grep -Eq '"status"[[:space:]]*:[[:space:]]*"degraded"' <<<"$ready_json"; then
     issues+=("API readiness reports degraded status: $ready_json")
-  fi
-  if grep -Eq '"stale"[[:space:]]*:[[:space:]]*true' <<<"$ready_json"; then
-    issues+=("One or more background jobs are stale")
-  fi
-  if grep -Eq '"ok"[[:space:]]*:[[:space:]]*false' <<<"$ready_json"; then
-    issues+=("One or more background jobs reported failure")
+  elif ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' <<<"$ready_json"; then
+    issues+=("API readiness reports unexpected status: $ready_json")
   fi
 fi
 

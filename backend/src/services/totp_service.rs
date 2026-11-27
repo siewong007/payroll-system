@@ -131,7 +131,7 @@ pub async fn begin_setup(
         .to_qr_base64()
         .map_err(|e| AppError::Internal(format!("Failed to render TOTP QR code: {e}")))?;
 
-    let encrypted = crypto::encrypt_secret(&secret_b32, encryption_key)?;
+    let encrypted = crypto::encrypt_secret_for_user(&secret_b32, encryption_key, user.id)?;
     if user_totp::upsert_pending(pool, user.id, &encrypted)
         .await?
         .is_none()
@@ -173,7 +173,14 @@ pub async fn confirm_setup_with_session(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
     if let Some(pw) = password {
-        verify_password(pool, user_id, pw, audit_meta).await?;
+        auth_service::verify_user_password_for_session(
+            pool,
+            user_id,
+            current_session_id,
+            pw,
+            audit_meta,
+        )
+        .await?;
     }
 
     let row = user_totp::find_by_user(pool, user_id)
@@ -183,7 +190,8 @@ pub async fn confirm_setup_with_session(
         return Err(AppError::Conflict("2FA is already enabled".into()));
     }
 
-    let secret_b32 = crypto::decrypt_secret(&row.secret_encrypted, encryption_key)?;
+    let secret_b32 =
+        crypto::decrypt_secret_for_user(&row.secret_encrypted, encryption_key, user_id)?;
     let totp = build_totp(parse_secret(&secret_b32)?, "")?;
 
     let trimmed = code.trim();
@@ -301,8 +309,9 @@ pub async fn verify_login_code_for_challenge(
 
     let trimmed = code.trim();
 
-    if let Ok(totp) = crypto::decrypt_secret(&row.secret_encrypted, encryption_key)
-        .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
+    if let Ok(totp) =
+        crypto::decrypt_secret_for_user(&row.secret_encrypted, encryption_key, user_id)
+            .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
     {
         let now_step = chrono::Utc::now().timestamp() / 30;
         let mut matched_step: Option<i64> = None;
@@ -338,7 +347,7 @@ pub async fn verify_login_code_for_challenge(
     let candidates: Vec<(Uuid, String)> = if let Some(candidate) = lookup_candidate {
         vec![(candidate.id, candidate.code_hash)]
     } else {
-        user_totp_backup_codes::find_unused_legacy(&mut *tx, user_id)
+        user_totp_backup_codes::find_all_unused_for_user(&mut *tx, user_id)
             .await?
             .into_iter()
             .map(|c| (c.id, c.code_hash))
@@ -449,8 +458,9 @@ pub async fn verify_code_login(
 
     let trimmed = code.trim();
 
-    if let Ok(totp) = crypto::decrypt_secret(&row.secret_encrypted, encryption_key)
-        .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
+    if let Ok(totp) =
+        crypto::decrypt_secret_for_user(&row.secret_encrypted, encryption_key, user_id)
+            .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
     {
         let now_step = chrono::Utc::now().timestamp() / 30;
         let mut matched_step: Option<i64> = None;
@@ -488,7 +498,7 @@ pub async fn verify_code_login(
     let candidates: Vec<(Uuid, String)> = if let Some(candidate) = lookup_candidate {
         vec![(candidate.id, candidate.code_hash)]
     } else {
-        user_totp_backup_codes::find_unused_legacy(&mut *tx, user_id)
+        user_totp_backup_codes::find_all_unused_for_user(&mut *tx, user_id)
             .await?
             .into_iter()
             .map(|c| (c.id, c.code_hash))
@@ -568,7 +578,7 @@ async fn verify_code_inner(
 
     let trimmed = code.trim();
 
-    match crypto::decrypt_secret(&row.secret_encrypted, encryption_key)
+    match crypto::decrypt_secret_for_user(&row.secret_encrypted, encryption_key, user_id)
         .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
     {
         Ok(totp) => {
@@ -611,9 +621,9 @@ async fn verify_code_inner(
     let candidates: Vec<(Uuid, String)> = if let Some(candidate) = lookup_candidate {
         vec![(candidate.id, candidate.code_hash)]
     } else {
-        // Fallback ONLY for legacy rows without `code_lookup_hash` so
-        // pre-migration backup codes remain valid.
-        user_totp_backup_codes::find_unused_legacy(&mut *tx, user_id)
+        // Fallback scans all unused codes for the user (<= 10 rows) so both
+        // pre-lookup legacy rows AND rows indexed under an older rotated key remain usable.
+        user_totp_backup_codes::find_all_unused_for_user(&mut *tx, user_id)
             .await?
             .into_iter()
             .map(|c| (c.id, c.code_hash))
@@ -723,8 +733,7 @@ pub async fn disable(
     disable_with_session(pool, user_id, None, password, audit_meta).await
 }
 
-/// Session-aware variant used by HTTP 2FA removal so any other sessions and
-/// pending MFA challenges are revoked without dropping the caller's session.
+/// Session-aware variant used by HTTP 2FA removal when password step-up has not yet run.
 pub async fn disable_with_session(
     pool: &PgPool,
     user_id: Uuid,
@@ -732,8 +741,26 @@ pub async fn disable_with_session(
     password: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let user = verify_password(pool, user_id, password, audit_meta).await?;
-    auth_service::require_two_factor_not_enforced(pool, &user).await?;
+    let user = auth_service::verify_user_password_for_session(
+        pool,
+        user_id,
+        current_session_id,
+        password,
+        audit_meta,
+    )
+    .await?;
+    disable_with_session_verified(pool, &user, current_session_id, audit_meta).await
+}
+
+/// Disables 2FA after step-up credentials have already been verified by the caller.
+pub async fn disable_with_session_verified(
+    pool: &PgPool,
+    user: &User,
+    current_session_id: Option<Uuid>,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    let user_id = user.id;
+    auth_service::require_two_factor_not_enforced(pool, user).await?;
 
     let mut tx = pool.begin().await?;
     user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
@@ -778,8 +805,7 @@ pub async fn regenerate_backup_codes(
         .await
 }
 
-/// Session-aware variant used by HTTP backup code regeneration so sibling
-/// sessions and push subscriptions are revoked when backup codes rotate.
+/// Session-aware variant used when password step-up has not yet run.
 pub async fn regenerate_backup_codes_with_session(
     pool: &PgPool,
     user_id: Uuid,
@@ -788,7 +814,33 @@ pub async fn regenerate_backup_codes_with_session(
     encryption_key: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
-    let user = verify_password(pool, user_id, password, audit_meta).await?;
+    let user = auth_service::verify_user_password_for_session(
+        pool,
+        user_id,
+        current_session_id,
+        password,
+        audit_meta,
+    )
+    .await?;
+    regenerate_backup_codes_with_session_verified(
+        pool,
+        &user,
+        current_session_id,
+        encryption_key,
+        audit_meta,
+    )
+    .await
+}
+
+/// Regenerates backup codes after step-up credentials have already been verified.
+pub async fn regenerate_backup_codes_with_session_verified(
+    pool: &PgPool,
+    user: &User,
+    current_session_id: Option<Uuid>,
+    encryption_key: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<Vec<String>> {
+    let user_id = user.id;
 
     if !is_enabled(pool, user_id).await? {
         return Err(AppError::BadRequest("2FA is not enabled".into()));
@@ -852,13 +904,22 @@ pub async fn reencrypt_all(
     let mut unreadable = 0usize;
 
     for row in rows {
-        if crypto::decrypt_secret(&row.secret_encrypted, encryption_key).is_ok() {
+        if row.secret_encrypted.starts_with("v3:")
+            && crypto::decrypt_secret_for_user(&row.secret_encrypted, encryption_key, row.user_id)
+                .is_ok()
+        {
             continue;
         }
 
-        match crypto::decrypt_with_legacy_jwt_derivation(&row.secret_encrypted, legacy_jwt_secret) {
+        let plaintext =
+            crypto::decrypt_secret(&row.secret_encrypted, encryption_key).or_else(|_| {
+                crypto::decrypt_with_legacy_jwt_derivation(&row.secret_encrypted, legacy_jwt_secret)
+            });
+
+        match plaintext {
             Ok(plaintext) => {
-                let encrypted = crypto::encrypt_secret(&plaintext, encryption_key)?;
+                let encrypted =
+                    crypto::encrypt_secret_for_user(&plaintext, encryption_key, row.user_id)?;
                 user_totp::update_secret(pool, row.id, &encrypted).await?;
                 migrated += 1;
             }
@@ -900,6 +961,18 @@ pub async fn admin_reset(
     actor_password: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
+    verify_password(pool, actor_user_id, actor_password, audit_meta).await?;
+    admin_reset_verified(pool, target_user_id, actor_user_id, audit_meta).await
+}
+
+/// Break-glass reset after the acting `super_admin`'s step-up credentials have
+/// already been verified in the handler.
+pub async fn admin_reset_verified(
+    pool: &PgPool,
+    target_user_id: Uuid,
+    actor_user_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
     if target_user_id == actor_user_id {
         // Not a safety property (the normal disable flow still requires only
         // the user's own credentials) but a reset aimed at yourself is always
@@ -908,8 +981,6 @@ pub async fn admin_reset(
             "Use 2FA settings to disable your own 2FA".into(),
         ));
     }
-
-    verify_password(pool, actor_user_id, actor_password, audit_meta).await?;
 
     let mut tx = pool.begin().await?;
 

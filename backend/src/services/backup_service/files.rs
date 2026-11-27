@@ -6,7 +6,7 @@
 //! resolves, and the restore ignores the archive's key entirely and writes each
 //! blob under a server-generated name, rewriting the rows to match.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use base64::Engine;
@@ -45,8 +45,12 @@ pub(super) fn cap_warnings(mut lines: Vec<String>, noun: &str) -> Vec<String> {
     lines
 }
 
+/// Hard cap on total raw bytes of local attachments embedded into a single
+/// company backup archive (70 MiB), matching the upload/archive budget.
+const MAX_BACKUP_EXPORT_BLOB_BYTES: usize = 70 * 1024 * 1024;
+
 /// Read every locally stored attachment the export references, base64-encoded
-/// by stored URL.
+/// by stored URL. Draft claims are omitted so staging files never bloat archives.
 ///
 /// A value that claims to be a local upload but does not name a safe one is
 /// skipped, never read. The result is embedded in the JSON archive the caller
@@ -67,20 +71,36 @@ pub(super) async fn collect_backup_files(
         }
     }
     for claim in claims {
+        if claim.status == "draft" {
+            continue;
+        }
         if let Some(url) = claim.receipt_url.as_ref() {
             urls.push(url);
         }
     }
 
     let mut files = HashMap::new();
+    let mut total_bytes: usize = 0;
     let b64 = base64::engine::general_purpose::STANDARD;
 
     for url in urls {
+        if files.contains_key(url) {
+            continue;
+        }
         match upload_path::local_upload_path(url) {
             Ok(Some(path)) => {
                 if let Ok(confined) = upload_path::confine_existing_file(&path)
                     && let Ok(data) = tokio::fs::read(&confined).await
                 {
+                    if total_bytes.saturating_add(data.len()) > MAX_BACKUP_EXPORT_BLOB_BYTES {
+                        tracing::warn!(
+                            file_url = %short_label(url),
+                            size_bytes = data.len(),
+                            "skipping backup attachment after reaching 70 MiB archive blob cap"
+                        );
+                        continue;
+                    }
+                    total_bytes += data.len();
                     files.insert(url.clone(), b64.encode(&data));
                 }
             }
@@ -159,19 +179,44 @@ impl RestorePlan {
     pub(super) fn is_dropped(&self, archive_key: &str) -> bool {
         self.dropped.contains(archive_key)
     }
+
+    /// Retain only entries whose target stored name passed decode & magic-byte validation,
+    /// marking rejected ones as dropped so `rewrite_attachment_urls` never persists dead links.
+    pub(super) fn retain_only_validated(&mut self, validated_blobs: &[(String, Vec<u8>)]) {
+        let valid_names: HashSet<&str> = validated_blobs
+            .iter()
+            .map(|(stored_name, _)| stored_name.as_str())
+            .collect();
+        let mut rejected_keys = Vec::new();
+        self.rewrites.retain(|archive_key, rewritten_url| {
+            let keep = rewritten_url
+                .strip_prefix(upload_path::UPLOAD_URL_PREFIX)
+                .is_some_and(|name| valid_names.contains(name));
+            if !keep {
+                rejected_keys.push(archive_key.clone());
+            }
+            keep
+        });
+        for key in rejected_keys {
+            self.dropped.insert(key);
+        }
+    }
 }
 
-/// Assign every blob in the archive a server-generated destination.
-///
-/// The key is used for one thing only: its extension. A key that carries no
-/// allow-listed extension names nothing this system is willing to write, so its
-/// blob is dropped rather than restored under some fallback name — which is
-/// also what happens to every traversal payload, since `../../app/.env` and
-/// `/etc/passwd` have no extension we accept.
-pub(super) fn plan_restore(files: &HashMap<String, String>) -> RestorePlan {
+/// Assign every blob in the archive a server-generated destination, optionally
+/// skipping unreferenced blobs.
+pub(super) fn plan_restore_referenced(
+    files: &HashMap<String, String>,
+    referenced_keys: Option<&HashSet<&str>>,
+) -> RestorePlan {
     let mut plan = RestorePlan::default();
 
     for archive_key in files.keys() {
+        if let Some(referenced) = referenced_keys
+            && !referenced.contains(archive_key.as_str())
+        {
+            continue;
+        }
         match upload_path::generated_stored_name(archive_key) {
             Some(name) => {
                 plan.rewrites.insert(
@@ -186,6 +231,18 @@ pub(super) fn plan_restore(files: &HashMap<String, String>) -> RestorePlan {
     }
 
     plan
+}
+
+/// Assign every blob in the archive a server-generated destination.
+///
+/// The key is used for one thing only: its extension. A key that carries no
+/// allow-listed extension names nothing this system is willing to write, so its
+/// blob is dropped rather than restored under some fallback name — which is
+/// also what happens to every traversal payload, since `../../app/.env` and
+/// `/etc/passwd` have no extension we accept.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn plan_restore(files: &HashMap<String, String>) -> RestorePlan {
+    plan_restore_referenced(files, None)
 }
 
 /// Write every planned blob under the name the plan minted for it.
@@ -257,7 +314,7 @@ pub(super) fn decode_and_validate_blobs(
 pub(super) async fn write_validated_blobs(
     validated: Vec<(String, Vec<u8>)>,
     mut problems: Vec<String>,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<String>, Vec<(String, i64)>) {
     if validated.is_empty() {
         problems.sort();
         return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
@@ -272,13 +329,14 @@ pub(super) async fn write_validated_blobs(
         return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
     }
 
-    let mut restored_names = Vec::with_capacity(validated.len());
+    let mut restored_files = Vec::with_capacity(validated.len());
     for (stored_name, data) in validated {
         let Ok(path) = upload_path::stored_path(&stored_name) else {
             continue;
         };
+        let len = data.len() as i64;
         match tokio::fs::write(&path, &data).await {
-            Ok(()) => restored_names.push(stored_name),
+            Ok(()) => restored_files.push((stored_name, len)),
             Err(error) => problems.push(format!(
                 "Attached file \"{}\" could not be written ({error}).",
                 short_label(&stored_name)
@@ -287,7 +345,7 @@ pub(super) async fn write_validated_blobs(
     }
 
     problems.sort();
-    let files_restored = restored_names.len();
+    let files_restored = restored_files.len();
     let mut warnings = cap_warnings(problems, "unrestored file(s)");
     if files_restored > 0 {
         warnings.insert(
@@ -295,7 +353,7 @@ pub(super) async fn write_validated_blobs(
             format!("{files_restored} file(s) restored to the uploads directory under new names."),
         );
     }
-    (warnings, restored_names)
+    (warnings, restored_files)
 }
 
 pub(super) async fn restore_backup_files_with_names(
@@ -303,7 +361,9 @@ pub(super) async fn restore_backup_files_with_names(
     plan: &RestorePlan,
 ) -> (Vec<String>, Vec<String>) {
     let (validated, problems) = decode_and_validate_blobs(files, plan);
-    write_validated_blobs(validated, problems).await
+    let (warnings, restored_files) = write_validated_blobs(validated, problems).await;
+    let names = restored_files.into_iter().map(|(name, _)| name).collect();
+    (warnings, names)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

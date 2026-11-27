@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import api from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
+import { createSingleReadUrlParams } from '@/lib/oauthParams';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { safeRedirectPath, translateServerMessage } from '@/lib/utils';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
@@ -11,33 +12,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import type { LoginResponse, User } from '@/types';
 
-/**
- * The callback outcome arrives in the URL fragment and must be read once per
- * page load: reading also clears the hash, so a second read sees nothing.
- *
- * This deliberately lives outside the component. StrictMode remounts it in
- * development, and a remount resets hooks — so a `useRef`/`useState` guard still
- * ran the effect a second time, found an empty hash, and overwrote the real
- * outcome with "Missing authentication data". That masked both the server's
- * error message and the 2FA prompt.
- */
-let callbackParams: URLSearchParams | null = null;
+const callbackUrlParams = createSingleReadUrlParams('hash');
 let inflightRefresh: Promise<LoginResponse> | null = null;
-
-function takeCallbackParams(): URLSearchParams {
-  const fromHash = new URLSearchParams(window.location.hash.substring(1));
-
-  // Only a hash that actually carried something replaces the memo. Caching an
-  // empty read would poison every later mount in the same JS context — and the
-  // remount is precisely when the hash is already gone.
-  if (Array.from(fromHash.keys()).length > 0) {
-    callbackParams = fromHash;
-    // The fragment is single-use and shouldn't linger in the URL or history.
-    window.history.replaceState(null, '', window.location.pathname);
-  }
-
-  return callbackParams ?? fromHash;
-}
 
 function consumeOAuth2Redirect(): string | null {
   try {
@@ -69,7 +45,7 @@ export function OAuth2Callback() {
   );
 
   useEffect(() => {
-    const params = takeCallbackParams();
+    const params = callbackUrlParams.take();
 
     const status = params.get('status');
     const pendingMfaToken = params.get('mfa_token');
@@ -97,7 +73,7 @@ export function OAuth2Callback() {
     }
 
     if (user) {
-      callbackParams = null;
+      callbackUrlParams.clear();
       goPostLogin(user);
       return;
     }
@@ -111,14 +87,14 @@ export function OAuth2Callback() {
     promise
       .then((data) => {
         inflightRefresh = null;
-        callbackParams = null;
+        callbackUrlParams.clear();
         if (cancelled) return;
         setSession(data.token, data.user);
         goPostLogin(data.user);
       })
       .catch(() => {
         inflightRefresh = null;
-        callbackParams = null;
+        callbackUrlParams.clear();
         if (!cancelled) {
           setError(t('auth.oauth.processFailed'));
         }
@@ -142,7 +118,7 @@ export function OAuth2Callback() {
           <Link
             to="/login"
             onClick={() => {
-              callbackParams = null;
+              callbackUrlParams.clear();
             }}
             className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-black dark:text-indigo-400 font-medium hover:underline rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           >
@@ -163,11 +139,11 @@ export function OAuth2Callback() {
           <TwoFactorPrompt
             mfaToken={mfaToken}
             onSuccess={(u) => {
-              callbackParams = null;
+              callbackUrlParams.clear();
               goPostLogin(u);
             }}
             onBack={() => {
-              callbackParams = null;
+              callbackUrlParams.clear();
               navigate('/login', { replace: true });
             }}
           />

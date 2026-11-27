@@ -5,12 +5,13 @@ import { Download, Upload, FileJson, CheckCircle2, AlertTriangle, Loader2, X } f
 import { exportCompanyBackup, importCompanyBackup } from '@/api/backup';
 import { listCompanies } from '@/api/admin';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { StepUpConfirmModal } from '@/components/ui/StepUpConfirmModal';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
 import { formatDateTime, formatNumber } from '@/lib/format';
 import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
-import type { ImportResult } from '@/types';
+import type { ImportResult, StepUpCredentials } from '@/types';
 
 const BACKUP_FILE_MAX_BYTES = 100 * 1024 * 1024;
 
@@ -42,6 +43,8 @@ export function BackupPage() {
   const [preview, setPreview] = useState<BackupPreviewMetadata | null>(null);
   const [previewError, setPreviewError] = useState('');
   const [createNewCompany, setCreateNewCompany] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'export' | 'import' | null>(null);
+  const [stepUpError, setStepUpError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileReadSeqRef = useRef(0);
 
@@ -58,17 +61,28 @@ export function BackupPage() {
 
   const targetCompany = companies?.find((c) => c.id === importCompanyId);
 
-  const handleExport = async () => {
+  const requestExport = () => {
+    if (isSuperAdmin && !exportCompanyId) return;
+    setExportSuccess(false);
+    setExportError('');
+    setStepUpError('');
+    setPendingAction('export');
+  };
+
+  const handleExport = async (stepUp: StepUpCredentials) => {
     if (isSuperAdmin && !exportCompanyId) return;
     setExporting(true);
     setExportSuccess(false);
     setExportError('');
+    setStepUpError('');
     try {
-      await exportCompanyBackup(isSuperAdmin ? exportCompanyId : undefined);
+      await exportCompanyBackup(isSuperAdmin ? exportCompanyId : undefined, stepUp);
       setExportSuccess(true);
+      setPendingAction(null);
       toast.success(t('backup.downloaded'));
     } catch (err: unknown) {
       const msg = getErrorMessage(err, t('backup.exportFailed'));
+      setStepUpError(msg);
       setExportError(msg);
       toast.error(msg);
     } finally {
@@ -139,23 +153,35 @@ export function BackupPage() {
     !createNewCompany &&
     (!importCompanyId || !targetCompany || confirmTargetName.trim() !== targetCompany.name);
 
-  const handleImport = async () => {
+  const requestImport = () => {
+    if (!selectedFile || !preview || previewError || overwriteBlocked) return;
+    setImportResult(null);
+    setImportError('');
+    setStepUpError('');
+    setPendingAction('import');
+  };
+
+  const handleImport = async (stepUp: StepUpCredentials) => {
     if (!selectedFile || !preview || previewError || overwriteBlocked) return;
     setImporting(true);
     setImportResult(null);
     setImportError('');
+    setStepUpError('');
     try {
       const result = await importCompanyBackup(
         selectedFile,
         isSuperAdmin && !createNewCompany ? importCompanyId : undefined,
         isSuperAdmin && createNewCompany,
+        stepUp,
       );
       setImportResult(result);
+      setPendingAction(null);
       clearSelectedFile();
       await queryClient.invalidateQueries();
       toast.success(result.is_overwrite ? t('backup.overwritten') : t('backup.importSuccess'));
     } catch (err: unknown) {
       const msg = getErrorMessage(err, t('backup.importFailed'));
+      setStepUpError(msg);
       setImportError(msg);
       toast.error(msg);
     } finally {
@@ -222,7 +248,7 @@ export function BackupPage() {
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={() => { void handleExport(); }}
+                onClick={requestExport}
                 disabled={exporting || (isSuperAdmin && !exportCompanyId)}
                 className="btn-primary w-full sm:w-auto min-h-11 inline-flex items-center justify-center gap-2"
               >
@@ -422,7 +448,7 @@ export function BackupPage() {
 
               <button
                 type="button"
-                onClick={() => { void handleImport(); }}
+                onClick={requestImport}
                 disabled={!selectedFile || !preview || importing || Boolean(previewError) || overwriteBlocked}
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[44px] bg-amber-600 text-white text-sm font-medium rounded-xl hover:bg-amber-700 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 transition-all"
               >
@@ -496,6 +522,54 @@ export function BackupPage() {
         </div>
       </div>
       </div>
+
+      <StepUpConfirmModal
+        open={pendingAction !== null}
+        onClose={() => {
+          if (!exporting && !importing) {
+            setPendingAction(null);
+            setStepUpError('');
+          }
+        }}
+        title={
+          pendingAction === 'import'
+            ? t('backup.confirmImportTitle')
+            : t('backup.confirmExportTitle')
+        }
+        description={
+          pendingAction === 'import'
+            ? isSuperAdmin && createNewCompany
+              ? t('backup.confirmImportCreateBody', {
+                  name: preview?.source_company_name ?? '',
+                })
+              : targetCompany
+                ? (
+                    <Trans
+                      i18nKey="backup.overwriteWarning"
+                      values={{ name: targetCompany.name }}
+                      components={{ b: <strong /> }}
+                    />
+                  )
+                : t('backup.importNote')
+            : t('backup.confirmExportBody')
+        }
+        confirmLabel={
+          pendingAction === 'import' ? t('backup.importBackup') : t('backup.exportBackup')
+        }
+        pendingLabel={
+          pendingAction === 'import' ? t('common.importing') : t('common.exporting')
+        }
+        variant={pendingAction === 'import' ? 'danger' : 'primary'}
+        pending={exporting || importing}
+        error={stepUpError}
+        onConfirm={(stepUp) => {
+          if (pendingAction === 'export') {
+            void handleExport(stepUp);
+          } else if (pendingAction === 'import') {
+            void handleImport(stepUp);
+          }
+        }}
+      />
     </div>
   );
 }

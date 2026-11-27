@@ -287,8 +287,13 @@ fn refresh_cookie_extraction_matches_exact_non_empty_cookie() {
         ),
     );
     assert_eq!(
-        extract_refresh_token(&headers).as_deref(),
+        extract_refresh_token(&headers, "http://localhost:5173").as_deref(),
         Some("right=value")
+    );
+    // HTTPS rejects the unprefixed cookie to prevent cookie-bombing downgrade.
+    assert_eq!(
+        extract_refresh_token(&headers, "https://payroll.example"),
+        None
     );
 
     headers.insert(
@@ -296,7 +301,11 @@ fn refresh_cookie_extraction_matches_exact_non_empty_cookie() {
         HeaderValue::from_static("session=abc; __Secure-refresh_token=prod=token; theme=dark"),
     );
     assert_eq!(
-        extract_refresh_token(&headers).as_deref(),
+        extract_refresh_token(&headers, "https://payroll.example").as_deref(),
+        Some("prod=token")
+    );
+    assert_eq!(
+        extract_refresh_token(&headers, "http://localhost:5173").as_deref(),
         Some("prod=token")
     );
 
@@ -304,7 +313,10 @@ fn refresh_cookie_extraction_matches_exact_non_empty_cookie() {
         header::COOKIE,
         HeaderValue::from_static("session=abc; refresh_token=; __Secure-refresh_token="),
     );
-    assert_eq!(extract_refresh_token(&headers), None);
+    assert_eq!(
+        extract_refresh_token(&headers, "http://localhost:5173"),
+        None
+    );
 }
 
 #[test]

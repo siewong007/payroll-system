@@ -338,7 +338,23 @@ pub async fn cancel_overtime_admin(
         ));
     }
 
+    let is_self_target = crate::repositories::users::is_employee_owned_by_user(
+        &mut *tx,
+        actor_id,
+        current.employee_id,
+        company_id,
+    )
+    .await?;
+    let actor_is_super_admin = crate::repositories::users::get_by_id(&mut *tx, actor_id)
+        .await?
+        .is_some_and(|u| u.roles.iter().any(|r| r == "super_admin"));
+
     if current.status == "approved" {
+        if is_self_target && !actor_is_super_admin {
+            return Err(AppError::Forbidden(
+                "You cannot cancel your own approved overtime application. Ask another approver, or a super admin, to review it.".into(),
+            ));
+        }
         if payroll_runs::has_non_draft_covering_dates(
             &mut *tx,
             company_id,
@@ -453,6 +469,26 @@ pub async fn cancel_overtime_admin(
         audit_meta,
     )
     .await;
+
+    if current.status == "approved" && is_self_target && actor_is_super_admin {
+        let _ = crate::services::audit_service::log_action_with_metadata(
+            pool,
+            Some(company_id),
+            Some(actor_id),
+            "self_approval_override",
+            "overtime",
+            Some(cancelled.id),
+            None,
+            Some(serde_json::json!({
+                "employee_id": cancelled.employee_id,
+                "action": "cancel_overtime_admin",
+                "self_target": true,
+            })),
+            Some("Super admin cancelled own approved overtime application (override logged)"),
+            audit_meta,
+        )
+        .await;
+    }
 
     Ok(cancelled)
 }

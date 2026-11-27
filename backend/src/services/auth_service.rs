@@ -50,31 +50,115 @@ pub async fn hash_password(password: &str) -> AppResult<String> {
 
 static DUMMY_BCRYPT_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+const MAX_STEP_UP_PASSWORD_ATTEMPTS: i32 = 5;
+const REVOKE_ALL_STEP_UP_ATTEMPTS: i32 = 10;
+const STEP_UP_LOCK_MINUTES: i64 = 15;
+
 pub async fn verify_user_password(
     pool: &PgPool,
     user_id: Uuid,
     password: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<User> {
+    verify_user_password_for_session(pool, user_id, None, password, audit_meta).await
+}
+
+pub async fn verify_user_password_for_session(
+    pool: &PgPool,
+    user_id: Uuid,
+    session_id: Option<Uuid>,
+    password: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<User> {
+    verify_user_password_with_action(
+        pool,
+        user_id,
+        session_id,
+        password,
+        "step_up_password_failed",
+        "Step-up password confirmation failed",
+        audit_meta,
+    )
+    .await
+}
+
+async fn verify_user_password_with_action(
+    pool: &PgPool,
+    user_id: Uuid,
+    session_id: Option<Uuid>,
+    password: &str,
+    audit_action: &str,
+    audit_description: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<User> {
     let user = get_user_by_id(pool, user_id).await?;
+    if user
+        .step_up_locked_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        return Err(AppError::TooManyRequests(
+            "Too many failed password confirmations. Please wait 15 minutes and try again.".into(),
+        ));
+    }
+
     let valid = verify_password(password, &user.password_hash)
         .await
-        .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
+        .unwrap_or(false);
     if !valid {
+        let attempts = users::record_failed_step_up_password(
+            pool,
+            user_id,
+            MAX_STEP_UP_PASSWORD_ATTEMPTS,
+            STEP_UP_LOCK_MINUTES,
+        )
+        .await
+        .unwrap_or(MAX_STEP_UP_PASSWORD_ATTEMPTS);
+
+        if attempts >= REVOKE_ALL_STEP_UP_ATTEMPTS {
+            if let Ok(mut tx) = pool.begin().await {
+                let _ = user_sessions::revoke_all_for_user(&mut *tx, user_id).await;
+                let _ = refresh_tokens::revoke_all_for_user(&mut *tx, user_id).await;
+                let _ = mfa_challenges::revoke_for_user(&mut *tx, user_id).await;
+                let _ =
+                    crate::repositories::push_subscriptions::revoke_all_for_user(&mut *tx, user_id)
+                        .await;
+                let _ = tx.commit().await;
+            }
+        } else if attempts >= MAX_STEP_UP_PASSWORD_ATTEMPTS
+            && let Some(sid) = session_id
+        {
+            let _ = session_service::revoke_session(pool, user_id, sid).await;
+        }
+
         let _ = audit_service::log_action_with_metadata(
             pool,
             user.company_id,
             Some(user.id),
-            "step_up_password_failed",
+            audit_action,
             "auth",
             Some(user.id),
             None::<serde_json::Value>,
-            Some(serde_json::json!({ "reason": "invalid_current_password" })),
-            Some("Step-up password confirmation failed"),
+            Some(serde_json::json!({
+                "reason": "invalid_current_password",
+                "attempts": attempts,
+                "locked": attempts >= MAX_STEP_UP_PASSWORD_ATTEMPTS,
+            })),
+            Some(audit_description),
             audit_meta,
         )
         .await;
+
+        if attempts >= MAX_STEP_UP_PASSWORD_ATTEMPTS {
+            return Err(AppError::TooManyRequests(
+                "Too many failed password confirmations. Please sign in again or wait 15 minutes."
+                    .into(),
+            ));
+        }
         return Err(AppError::BadRequest("Current password is incorrect".into()));
+    }
+
+    if user.step_up_failed_attempts > 0 || user.step_up_locked_until.is_some() {
+        let _ = users::clear_failed_step_up_passwords(pool, user_id).await;
     }
     Ok(user)
 }
@@ -601,29 +685,40 @@ pub async fn change_password(
     totp_encryption_key: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let user = get_user_by_id(pool, user_id).await?;
+    change_password_for_session(
+        pool,
+        user_id,
+        None,
+        current_password,
+        new_password,
+        totp_code,
+        totp_encryption_key,
+        audit_meta,
+    )
+    .await
+}
 
-    // A malformed stored hash is an authentication failure, not a server fault.
-    let valid = verify_password(current_password, &user.password_hash)
-        .await
-        .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
-
-    if !valid {
-        let _ = audit_service::log_action_with_metadata(
-            pool,
-            user.company_id,
-            Some(user_id),
-            "password_change_failed",
-            "auth",
-            Some(user_id),
-            None::<serde_json::Value>,
-            Some(serde_json::json!({ "reason": "invalid_current_password" })),
-            Some("Password change rejected"),
-            audit_meta,
-        )
-        .await;
-        return Err(AppError::BadRequest("Current password is incorrect".into()));
-    }
+#[allow(clippy::too_many_arguments)]
+pub async fn change_password_for_session(
+    pool: &PgPool,
+    user_id: Uuid,
+    current_session_id: Option<Uuid>,
+    current_password: &str,
+    new_password: &str,
+    totp_code: Option<&str>,
+    totp_encryption_key: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    let user = verify_user_password_with_action(
+        pool,
+        user_id,
+        current_session_id,
+        current_password,
+        "password_change_failed",
+        "Password change rejected",
+        audit_meta,
+    )
+    .await?;
 
     totp_service::verify_step_up_if_enabled(
         pool,
@@ -671,15 +766,17 @@ pub async fn change_password(
     Ok(())
 }
 
-/// Roles whose holders can move tenant money or export tenant PII. When the
-/// platform enables 2FA enforcement, these roles must hold a working second
-/// factor before any session is minted (plan item 36).
+/// Roles whose holders can move tenant money, approve requests, or view/export
+/// employee PII. Matches every role holding at least one permission in
+/// [`TWO_FACTOR_REQUIRED_GROUP_PERMS`] so role grants and group grants cannot drift.
 pub const TWO_FACTOR_REQUIRED_ROLES: &[&str] = &[
     "super_admin",
     "admin",
     "manager",
     "payroll_admin",
+    "hr_manager",
     "finance",
+    "exec",
 ];
 
 pub(crate) const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
@@ -959,4 +1056,28 @@ async fn platform_settings_value(pool: &PgPool, key: &str) -> AppResult<Option<S
 fn parse_grace(raw: Option<String>) -> Option<chrono::NaiveDate> {
     raw.as_deref()
         .and_then(|v| chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d").ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::permission::{ALL_ROLES, role_permissions};
+
+    #[test]
+    fn two_factor_required_roles_cover_every_role_with_sensitive_permissions() {
+        for &role in ALL_ROLES {
+            let has_sensitive_perm = role_permissions(role)
+                .iter()
+                .any(|p| TWO_FACTOR_REQUIRED_GROUP_PERMS.contains(&p.as_str()));
+            if has_sensitive_perm {
+                assert!(
+                    TWO_FACTOR_REQUIRED_ROLES.contains(&role),
+                    "role {role} holds sensitive permissions and must be in TWO_FACTOR_REQUIRED_ROLES"
+                );
+            }
+        }
+        assert!(TWO_FACTOR_REQUIRED_ROLES.contains(&"hr_manager"));
+        assert!(TWO_FACTOR_REQUIRED_ROLES.contains(&"exec"));
+        assert!(!TWO_FACTOR_REQUIRED_ROLES.contains(&"employee"));
+    }
 }

@@ -29,7 +29,7 @@ readonly LOCK_FILE="$APP_DIR/deploy.lock"
 readonly CADDY_FILE=/etc/caddy/Caddyfile
 readonly CADDY_SITE_FILE=/etc/caddy/payroll.Caddyfile
 readonly API_DOMAIN="${PAYROLL_API_DOMAIN:-api.payrollmy.com}"
-readonly POSTGRES_IMAGE=postgres:19beta2
+readonly POSTGRES_IMAGE=postgres:19beta2@sha256:70005d4e7503d0f3970cdc2ddd01a48a0427b85be30a757f873fdd4cd49aa98c
 readonly COMPOSE_VERSION=v5.1.4
 readonly COMPOSE_SHA256=33b208d7e76639db742fae84b966cc01dacae58ca3fc4dabbc907045aefdf0c4
 
@@ -106,10 +106,13 @@ ensure_host_runtime() {
     install -d -m 0755 "$plugin_dir"
     plugin_tmp=$(mktemp "$plugin_dir/docker-compose.XXXXXX")
     curl --fail --silent --show-error --location \
+      --proto =https --proto-redir =https --max-time 60 \
       "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64" \
       --output "$plugin_tmp"
-    printf '%s  %s\n' "$COMPOSE_SHA256" "$plugin_tmp" | sha256sum --check --status - \
-      || die "downloaded Docker Compose plugin failed checksum verification"
+    if ! printf '%s  %s\n' "$COMPOSE_SHA256" "$plugin_tmp" | sha256sum --check --status -; then
+      rm -f "$plugin_tmp"
+      die "downloaded Docker Compose plugin failed checksum verification"
+    fi
     chmod 0755 "$plugin_tmp"
     mv "$plugin_tmp" "$plugin_dir/docker-compose"
     docker compose version >/dev/null 2>&1 || die "Docker Compose plugin installation failed"
@@ -172,10 +175,30 @@ install_release_files() {
   install -m 0644 "$RELEASE_DIR/docker-compose.prod.yml" "$COMPOSE_FILE"
   install -m 0750 "$RELEASE_DIR/deploy.sh" "$APP_DIR/deploy.sh"
 
-  # Ensure directories referenced by systemd ReadWritePaths= exist before
-  # enabling/starting the units so mount namespaces never fail with 226/NAMESPACE.
+  # Ensure directories and unprivileged watchdog service user referenced by
+  # systemd ReadWritePaths= exist before enabling/starting the units so mount
+  # namespaces never fail with 226/NAMESPACE.
+  if ! id -u payroll-watchdog >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin payroll-watchdog
+  fi
   install -d -m 0750 -o root -g root "$APP_DIR/logs"
+  install -d -m 0750 -o payroll-watchdog -g payroll-watchdog "$APP_DIR/logs/watchdog"
   install -d -m 0700 -o root -g root "$BACKUP_DIR"
+
+  # Sync ALERT_WEBHOOK_URL (only) from secrets.env into a watchdog-readable env file
+  # so the watchdog unit runs unprivileged without access to JWT/TOTP/DB secrets.
+  local webhook_line
+  webhook_line=$(grep -m1 -E '^[[:space:]]*ALERT_WEBHOOK_URL=' "$SECRETS_FILE" 2>/dev/null || true)
+  local watchdog_tmp
+  watchdog_tmp=$(mktemp "$APP_DIR/.watchdog.env.XXXXXX")
+  if [[ -n "$webhook_line" ]]; then
+    printf '%s\n' "$webhook_line" > "$watchdog_tmp"
+  else
+    : > "$watchdog_tmp"
+  fi
+  chown root:payroll-watchdog "$watchdog_tmp"
+  chmod 0640 "$watchdog_tmp"
+  mv -f "$watchdog_tmp" "$APP_DIR/watchdog.env"
 
   # Nightly local backup: the script runs from APP_DIR (the release directory
   # is wiped by cleanup_old_releases), and the timer is enabled idempotently on
@@ -198,7 +221,7 @@ install_release_files() {
     "$APP_DIR/data/uploads"
 
   cat > /etc/logrotate.d/payroll <<'LOGROTATE'
-/opt/payroll/logs/*.log {
+/opt/payroll/logs/*.log /opt/payroll/logs/watchdog/*.log {
     daily
     maxsize 10M
     rotate 7
@@ -274,13 +297,18 @@ deploy_tag() {
   compose up --detach --remove-orphans || return 1
   wait_for_healthy payroll-db || return 1
   wait_for_healthy payroll-backend || return 1
-  # Verify from the HOST (not just the container healthcheck) so a missing port
-  # publish or stale container revision is caught before Caddy stays pointed at it.
-  local ready_body
-  ready_body=$(curl -fsS http://127.0.0.1:8080/api/health/ready) || return 1
+  # Verify from the HOST (port publish live) AND inside container loopback
+  # (where ConnectInfo peer IP is 127.0.0.1 so `ready` emits `revision`).
+  local host_ready ready_body
+  host_ready=$(curl -fsS --max-time 10 http://127.0.0.1:8080/api/health/ready) || return 1
+  if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"(ready|degraded)"' <<<"$host_ready"; then
+    log "Host readiness status check failed on 127.0.0.1:8080: $host_ready"
+    return 1
+  fi
+  ready_body=$(docker exec payroll-backend curl -fsS --max-time 10 http://127.0.0.1:8080/api/health/ready) || return 1
   if [[ "$mode" != "rollback" ]] || grep -Eq '"revision"[[:space:]]*:' <<<"$ready_body"; then
     if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${target_tag}\"" <<<"$ready_body"; then
-      log "Readiness revision mismatch on 127.0.0.1:8080 (expected $target_tag): $ready_body"
+      log "Readiness revision mismatch on loopback probe (expected $target_tag): $ready_body"
       return 1
     fi
   fi
@@ -343,15 +371,23 @@ report_recovery_options() {
 }
 
 configure_caddy() {
-  # If any host Caddyfile already serves the API domain, leave that config
-  # untouched: AIC's /etc/caddy/Caddyfile imports payrollmy.Caddyfile, which
-  # already reverse-proxies api.payrollmy.com to 127.0.0.1:8080. Matching only
-  # the main Caddyfile misses that import, so a second site file is added and
-  # `caddy validate` fails with "ambiguous site definition".
+  # If a separate unmanaged Caddyfile already serves the API domain, validate
+  # it and warn loudly if required proxy hardening directives are absent;
+  # otherwise always reconcile $CADDY_SITE_FILE idempotently on deploy.
   local domain_re="^[[:space:]]*${API_DOMAIN//./\\.}[[:space:]]*\{"
-  if grep -RqsE --include='Caddyfile' --include='*.Caddyfile' \
-       "$domain_re" /etc/caddy 2>/dev/null; then
-    log "Host Caddy already serves ${API_DOMAIN}; leaving it as-is (it now proxies to the container on 127.0.0.1:8080)."
+  local external_match
+  external_match=$(
+    find /etc/caddy -type f \( -name 'Caddyfile' -o -name '*.Caddyfile' \) ! -path "$CADDY_SITE_FILE" -print0 2>/dev/null \
+      | xargs -0 -r grep -lsE "$domain_re" || true
+  )
+  if [[ -n "$external_match" ]]; then
+    log "Host Caddy already serves ${API_DOMAIN} via $external_match; leaving it untouched."
+    if ! grep -Eq 'request_header[[:space:]]+.*-CF-Connecting-IP' "$external_match" 2>/dev/null; then
+      log "WARNING: $external_match is missing '@not_cloudflare / request_header -CF-Connecting-IP' — add Cloudflare origin header stripping to prevent IP spoofing!"
+    fi
+    if ! grep -Fq '/api/auth/*' "$external_match" 2>/dev/null; then
+      log "WARNING: $external_match does not exclude /api/auth/* from Caddy compression (BREACH hardening)."
+    fi
     caddy validate --config "$CADDY_FILE" \
       || die "existing host Caddyfile failed validation; not reloading"
     return 0
@@ -377,7 +413,8 @@ configure_caddy() {
   # nothing to read. JSON format so a jail filter can anchor on remote_ip.
   cat > "$site_tmp" <<CADDY
 ${API_DOMAIN} {
-    encode zstd gzip
+    @compressible not path /api/auth/*
+    encode @compressible zstd gzip
 
     header ?Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
@@ -392,6 +429,7 @@ ${API_DOMAIN} {
 
     @not_cloudflare not remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
     request_header @not_cloudflare -CF-Connecting-IP
+    request_header @not_cloudflare -X-Real-IP
 
     reverse_proxy 127.0.0.1:8080
 }

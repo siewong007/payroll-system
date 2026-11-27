@@ -1128,6 +1128,58 @@ pub async fn insert_overtime(
     Ok(())
 }
 
+/// Backfill historical paid overtime applications imported from pre-1038 archives
+/// (`status = 'approved'`, `payroll_run_id IS NULL`) using exact `payroll_entries`
+/// linkage first and payroll run date-window coverage as legacy fallback.
+pub async fn backfill_restored_overtime_runs(
+    conn: &mut sqlx::PgConnection,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE overtime_applications oa
+           SET status = 'processed',
+               payroll_run_id = pe.payroll_run_id
+           FROM payroll_entries pe
+           WHERE oa.company_id = $1
+             AND pe.company_id = oa.company_id
+             AND pe.overtime_application_id = oa.id
+             AND pe.is_processed = TRUE
+             AND pe.payroll_run_id IS NOT NULL
+             AND oa.status = 'approved'
+             AND oa.payroll_run_id IS NULL"#,
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    sqlx::query!(
+        r#"UPDATE overtime_applications oa
+           SET status = 'processed',
+               payroll_run_id = match_run.payroll_run_id
+           FROM (
+               SELECT DISTINCT ON (oa2.id)
+                      oa2.id AS ot_id,
+                      pr.id AS payroll_run_id
+               FROM overtime_applications oa2
+               JOIN payroll_items pi ON pi.employee_id = oa2.employee_id
+               JOIN payroll_runs pr ON pr.id = pi.payroll_run_id
+               WHERE oa2.company_id = $1
+                 AND oa2.status = 'approved'
+                 AND oa2.payroll_run_id IS NULL
+                 AND pr.company_id = $1
+                 AND pr.status IN ('processing', 'processed', 'pending_approval', 'approved', 'paid')
+                 AND oa2.ot_date BETWEEN pr.period_start AND pr.period_end
+               ORDER BY oa2.id, pr.period_start DESC, pr.created_at DESC
+           ) AS match_run
+           WHERE oa.id = match_run.ot_id
+             AND oa.company_id = $1"#,
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 pub async fn insert_payroll_run(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,

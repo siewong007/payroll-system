@@ -85,7 +85,7 @@ jobs:
         # below dies with "no such command: sqlx". Version tracks the `sqlx`
         # dependency in backend/Cargo.toml. rust-cache restores this binary on
         # later runs, so the build cost is paid once.
-        run: cargo install sqlx-cli --version ^0.9 --no-default-features --features rustls,postgres --locked
+        run: cargo install sqlx-cli --version 0.9.1 --no-default-features --features rustls,postgres --locked
       - name: Apply migrations
         # `prepare --check` expands every query!/query_as! macro against a live
         # schema, so the service container must be migrated first — otherwise it
@@ -120,7 +120,7 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=backend-docker
-          cache-to: type=gha,mode=max,scope=backend-docker
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=backend-docker' || '' }}
 
   backend-audit:
     name: Backend Security Audit
@@ -141,12 +141,12 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: backend
-          # RUSTSEC-2023-0071 (Marvin timing sidechannel) is in rsa, pulled into
-          # Cargo.lock only via sqlx-mysql (an uncompiled backend: this crate
-          # enables only sqlx's `postgres` feature, so `rsa` and `sqlx-mysql`
-          # are absent from `cargo tree -i`).
+          # RUSTSEC-2023-0071 (Marvin timing sidechannel) is in rsa 0.10.0-rc.19,
+          # pulled via webauthn-rs 0.6.2 -> webauthn-rs-core -> crypto-glue 0.2.2
+          # strictly for RSA public-key signature verification (no private-key
+          # decryption/signing is reachable; Marvin timing attacks require private-key ops).
           # RUSTSEC-2026-0459 flags libsqlite3-sys 0.30.1 in Cargo.lock via
-          # sqlx-sqlite, which is likewise never compiled (`cargo tree -i
+          # sqlx-sqlite, which is never compiled (`cargo tree --target all -i
           # libsqlite3-sys` is empty — only Postgres is enabled).
           # Re-review all ignores at least quarterly (next: 2026-12).
           ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0459
@@ -221,17 +221,20 @@ jobs:
       - name: Enforce migration immutability (plan item 34)
         env:
           PUSH_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           # On push events origin/main IS the pushed tip, so diffing against it
           # compares HEAD to itself and the gate is vacuous — an in-place edit
           # pushed straight to main would sail through. Diff the pre-push tip
           # instead; PR events keep the merge-base comparison.
-          if [ "${{ github.event_name }}" = "push" ] && \
+          if [ "$EVENT_NAME" = "push" ] && \
              [ -n "$PUSH_BEFORE" ] && \
              [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
             base="$PUSH_BEFORE"
           else
-            target_branch="${{ github.base_ref || github.ref_name }}"
+            target_branch="${BASE_REF:-$REF_NAME}"
             git fetch origin "$target_branch" 2>/dev/null || git fetch origin main 2>/dev/null || true
             base="origin/$target_branch"
             if ! git rev-parse --verify "$base" >/dev/null 2>&1; then
@@ -280,7 +283,7 @@ jobs:
           workspaces: backend
 
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --version ^0.9 --no-default-features --features rustls,postgres --locked
+        run: cargo install sqlx-cli --version 0.9.1 --no-default-features --features rustls,postgres --locked
 
       - name: Apply full chain from empty, then prove re-run is a no-op
         working-directory: backend

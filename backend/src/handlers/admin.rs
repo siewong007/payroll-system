@@ -13,7 +13,9 @@ use crate::models::audit::AuditRequestMeta;
 use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest};
 use crate::models::pagination::PaginatedResponse;
 use crate::models::totp::{AdminTotpResetRequest, TwoFactorPolicyRequest, TwoFactorPolicyResponse};
-use crate::models::user_company::{CreateUserRequest, UpdateUserRequest, UserWithCompanies};
+use crate::models::user_company::{
+    CreateUserRequest, StepUpConfirmRequest, UpdateUserRequest, UserWithCompanies,
+};
 use crate::repositories::reads::system as system_reads;
 use crate::services::{
     auth_service, company_service, job_health_service, totp_service, user_service,
@@ -77,9 +79,19 @@ pub async fn delete_company(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(company_id): Path<Uuid>,
+    meta: AuditRequestMeta,
+    ValidatedJson(req): ValidatedJson<StepUpConfirmRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManageCompanies)?;
     require_super_admin(&auth)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.actor_password),
+        req.actor_totp_code.as_deref(),
+        Some(&meta),
+    )
+    .await?;
     company_service::delete_company(&state.pool, company_id, auth.0.sub).await?;
 
     if auth.0.company_id == Some(company_id) {
@@ -176,26 +188,14 @@ pub async fn create_user(
 ) -> AppResult<Json<UserWithCompanies>> {
     auth.require_permission(Permission::ManageUsers)?;
     require_super_admin(&auth)?;
-    let creating_privileged = req.roles.iter().any(|r| r == "super_admin" || r == "admin");
-    if creating_privileged {
-        let actor_password = req
-            .actor_password
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                AppError::BadRequest("Current password confirmation is required".into())
-            })?;
-        auth_service::verify_user_password(&state.pool, auth.0.sub, actor_password, Some(&meta))
-            .await?;
-        totp_service::verify_step_up_if_enabled(
-            &state.pool,
-            auth.0.sub,
-            req.actor_totp_code.as_deref(),
-            &state.config.totp_encryption_key,
-            Some(&meta),
-        )
-        .await?;
-    }
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        req.actor_password.as_deref(),
+        req.actor_totp_code.as_deref(),
+        Some(&meta),
+    )
+    .await?;
     let user = user_service::create_user(&state.pool, req, auth.0.sub, Some(&meta)).await?;
     Ok(Json(user))
 }
@@ -216,11 +216,15 @@ pub async fn update_user(
         .roles
         .iter()
         .any(|r| r == "super_admin" || r == "admin");
-    let target_privileged = req
+    let normalized_next_roles = req
         .roles
         .as_ref()
+        .map(|roles| user_service::normalize_requested_roles(roles))
+        .transpose()?;
+    let target_privileged = normalized_next_roles
+        .as_ref()
         .is_some_and(|roles| roles.iter().any(|r| r == "super_admin" || r == "admin"));
-    let roles_changed = req.roles.as_ref().is_some_and(|roles| {
+    let roles_changed = normalized_next_roles.as_ref().is_some_and(|roles| {
         let mut next: Vec<&str> = roles.iter().map(String::as_str).collect();
         let mut cur: Vec<&str> = existing.roles.iter().map(String::as_str).collect();
         next.sort_unstable();
@@ -229,22 +233,21 @@ pub async fn update_user(
         cur.dedup();
         next != cur
     });
-    let privilege_or_scope_change = roles_changed || req.company_ids.is_some();
+    let email_changed = req
+        .email
+        .as_deref()
+        .is_some_and(|e| !e.trim().eq_ignore_ascii_case(existing.email.trim()));
+    let is_active_changed = req
+        .is_active
+        .is_some_and(|active| existing.is_active != Some(active));
+    let privilege_or_scope_change =
+        roles_changed || req.company_ids.is_some() || email_changed || is_active_changed;
     if existing_privileged || target_privileged || privilege_or_scope_change {
-        let actor_password = req
-            .actor_password
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                AppError::BadRequest("Current password confirmation is required".into())
-            })?;
-        auth_service::verify_user_password(&state.pool, auth.0.sub, actor_password, Some(&meta))
-            .await?;
-        totp_service::verify_step_up_if_enabled(
-            &state.pool,
-            auth.0.sub,
+        crate::handlers::auth::require_step_up(
+            &state,
+            &auth,
+            req.actor_password.as_deref(),
             req.actor_totp_code.as_deref(),
-            &state.config.totp_encryption_key,
             Some(&meta),
         )
         .await?;
@@ -259,9 +262,18 @@ pub async fn delete_user(
     auth: AuthUser,
     Path(user_id): Path<Uuid>,
     meta: AuditRequestMeta,
+    ValidatedJson(req): ValidatedJson<StepUpConfirmRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManageUsers)?;
     require_super_admin(&auth)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.actor_password),
+        req.actor_totp_code.as_deref(),
+        Some(&meta),
+    )
+    .await?;
     user_service::delete_user(&state.pool, user_id, auth.0.sub, Some(&meta)).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -288,16 +300,15 @@ pub async fn reset_user_2fa(
         return Err(AppError::Forbidden("super_admin only".into()));
     }
 
-    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password, Some(&meta)).await?;
-    totp_service::verify_step_up_if_enabled(
-        &state.pool,
-        auth.0.sub,
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.password),
         req.totp_code.as_deref(),
-        &state.config.totp_encryption_key,
         Some(&meta),
     )
     .await?;
-    totp_service::admin_reset(&state.pool, user_id, auth.0.sub, &req.password, Some(&meta)).await?;
+    totp_service::admin_reset_verified(&state.pool, user_id, auth.0.sub, Some(&meta)).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -324,18 +335,11 @@ pub async fn set_2fa_policy(
 ) -> AppResult<Json<TwoFactorPolicyResponse>> {
     auth.require_permission(Permission::ManagePlatformSettings)?;
     require_super_admin(&auth)?;
-    let actor_password = req
-        .actor_password
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::BadRequest("Current password confirmation is required".into()))?;
-    auth_service::verify_user_password(&state.pool, auth.0.sub, actor_password, Some(&audit_meta))
-        .await?;
-    totp_service::verify_step_up_if_enabled(
-        &state.pool,
-        auth.0.sub,
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        req.actor_password.as_deref(),
         req.actor_totp_code.as_deref(),
-        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await?;

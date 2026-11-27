@@ -10,6 +10,7 @@
  *      and does not exceed 180 days from today (preventing indefinite suppressions).
  *   3. No stale registry entries linger after an ignore is removed from CI.
  */
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +64,30 @@ for (const entry of registry.ignores) {
   if (!entry.expires || !DATE_RE.test(entry.expires) || Number.isNaN(Date.parse(`${entry.expires}T00:00:00Z`))) {
     errors.push(`${entry.id}: invalid "expires" date "${entry.expires}" (expected YYYY-MM-DD)`);
     continue;
+  }
+
+  if (entry.ecosystem === 'cargo') {
+    if (typeof entry.compiled !== 'boolean') {
+      errors.push(`${entry.id}: cargo ignore entries must explicitly set boolean "compiled"`);
+    } else if (entry.compiled === false && entry.package) {
+      try {
+        const treeOut = execFileSync(
+          'cargo',
+          ['tree', '--manifest-path', join(ROOT, 'backend', 'Cargo.toml'), '--target', 'all', '-i', entry.package],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+        );
+        if (treeOut.includes(entry.package)) {
+          errors.push(
+            `${entry.id}: marked compiled=false for "${entry.package}", but cargo tree shows it in the active dependency graph`,
+          );
+        }
+      } catch (err) {
+        if (err && typeof err === 'object' && 'code' in err && err.code !== 'ENOENT') {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${entry.id}: failed to verify cargo dependency graph for "${entry.package}": ${msg}`);
+        }
+      }
+    }
   }
 
   const remainingDays = daysBetween(today, entry.expires);

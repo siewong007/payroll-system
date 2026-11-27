@@ -173,7 +173,7 @@ pub async fn exists_replacement_granted_for_date(
             WHERE employee_id = $1
               AND ot_date = $2
               AND ot_type = 'public_holiday'
-              AND status = 'approved'
+              AND status IN ('approved', 'processed')
               AND id <> $3
         ) AS "exists!""#,
         employee_id,

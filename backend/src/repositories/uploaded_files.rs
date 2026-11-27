@@ -12,24 +12,83 @@ pub struct UploadedFileRow {
     pub uploaded_by: Option<Uuid>,
 }
 
-/// Record ownership of a newly written file under `uploads/`.
+/// Record ownership and byte size of a newly written file under `uploads/`.
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     stored_name: &str,
     company_id: Uuid,
     uploaded_by: Option<Uuid>,
+    file_size_bytes: i64,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"INSERT INTO uploaded_files (stored_name, company_id, uploaded_by)
-           VALUES ($1, $2, $3)
+        r#"INSERT INTO uploaded_files (stored_name, company_id, uploaded_by, file_size_bytes)
+           VALUES ($1, $2, $3, $4)
            ON CONFLICT (stored_name) DO NOTHING"#,
         stored_name,
         company_id,
         uploaded_by,
+        file_size_bytes,
     )
     .execute(executor)
     .await?;
     Ok(())
+}
+
+/// Total recorded bytes of uploaded files currently owned by `company_id`.
+pub async fn company_total_bytes(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<i64> {
+    let total = sqlx::query_scalar!(
+        r#"SELECT COALESCE(SUM(file_size_bytes), 0)::bigint AS "total!"
+           FROM uploaded_files
+           WHERE company_id = $1"#,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(total)
+}
+
+/// Count and total bytes of unreferenced files uploaded by `user_id` in `company_id`.
+pub async fn user_unreferenced_stats(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<(i64, i64)> {
+    let row = sqlx::query!(
+        r#"SELECT COUNT(*)::bigint AS "count!",
+                  COALESCE(SUM(uf.file_size_bytes), 0)::bigint AS "bytes!"
+           FROM uploaded_files uf
+           WHERE uf.company_id = $1
+             AND uf.uploaded_by = $2
+             AND NOT EXISTS (
+                 SELECT 1 FROM claims c
+                 WHERE c.company_id = uf.company_id
+                   AND c.receipt_url = '/api/uploads/' || uf.stored_name
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM leave_requests lr
+                 WHERE lr.company_id = uf.company_id
+                   AND lr.attachment_url = '/api/uploads/' || uf.stored_name
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM documents d
+                 WHERE d.company_id = uf.company_id
+                   AND d.file_url = '/api/uploads/' || uf.stored_name
+                   AND d.deleted_at IS NULL
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM companies co
+                 WHERE co.id = uf.company_id
+                   AND co.logo_url = '/api/uploads/' || uf.stored_name
+             )"#,
+        company_id,
+        user_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok((row.count, row.bytes))
 }
 
 /// Look up the recorded tenant and uploader for a managed upload filename.

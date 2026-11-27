@@ -11,6 +11,7 @@ import type {
   PaginatedResponse,
   CompanySummary,
   LoginResponse,
+  StepUpCredentials,
 } from '@/types';
 
 // Company management (super_admin)
@@ -23,8 +24,8 @@ export const createCompany = (req: CreateCompanyRequest) =>
 export const updateCompanyAdmin = (id: string, req: UpdateCompanyRequest) =>
   api.put<Company>(`/admin/companies/${id}`, req).then((r) => r.data);
 
-export const deleteCompany = (id: string) =>
-  api.delete<{ ok: boolean; token?: string; user?: User }>(`/admin/companies/${id}`).then((r) => r.data);
+export const deleteCompany = (id: string, stepUp: StepUpCredentials) =>
+  api.delete<{ ok: boolean; token?: string; user?: User }>(`/admin/companies/${id}`, { data: stepUp }).then((r) => r.data);
 
 // User management
 export const listUsers = (params: ListUsersParams = {}) =>
@@ -44,8 +45,8 @@ export const createUser = (req: CreateUserRequest) =>
 export const updateUser = (userId: string, req: UpdateUserRequest) =>
   api.put<UserWithCompanies>(`/admin/users/${userId}`, req).then((r) => r.data);
 
-export const deleteUser = (userId: string) =>
-  api.delete(`/admin/users/${userId}`).then((r) => r.data);
+export const deleteUser = (userId: string, stepUp: StepUpCredentials) =>
+  api.delete(`/admin/users/${userId}`, { data: stepUp }).then((r) => r.data);
 
 export const resetUser2fa = (userId: string, password: string, totpCode?: string) =>
   api

@@ -277,7 +277,7 @@ async fn audit_redacts_tp3_company_settings_divisor_and_hides_privileged_filter_
     )
     .await
     .expect("list audit");
-    crate::services::audit_service::redact_audit_logs(&mut logs, true, true);
+    crate::services::audit_service::redact_audit_logs(&mut logs, true, true, true, None);
 
     assert!(!logs.iter().any(|l| l.entity_type == "user"));
     let tp3_row = logs

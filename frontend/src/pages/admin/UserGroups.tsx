@@ -10,10 +10,13 @@ import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { StepUpConfirmModal } from '@/components/ui/StepUpConfirmModal';
+import { useAuth } from '@/context/AuthContext';
 import { useConfirm } from '@/lib/confirm';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
+import type { StepUpCredentials } from '@/types';
 
 const PLATFORM_ONLY_PERMISSIONS = new Set<PermissionKey>([
   'manage_users',
@@ -38,7 +41,6 @@ const PAYROLL_PREPARE_PERMISSIONS = new Set<PermissionKey>([
  */
 export function UserGroups() {
   const { t } = useTranslation();
-  const confirmDialog = useConfirm();
   const toast = useToast();
   const { can } = usePermissions();
   const canManageUsers = can('manage_users');
@@ -46,6 +48,8 @@ export function UserGroups() {
   const [editing, setEditing] = useState<UserGroup | null>(null);
   const [creating, setCreating] = useState(false);
   const [membersGroup, setMembersGroup] = useState<UserGroup | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<UserGroup | null>(null);
+  const [deleteStepUpError, setDeleteStepUpError] = useState('');
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
 
   const groups = useQuery({ queryKey: ['user-groups'], queryFn: userGroupsApi.list });
@@ -56,15 +60,20 @@ export function UserGroups() {
   });
 
   const remove = useMutation({
-    mutationFn: userGroupsApi.remove,
-    onMutate: (groupId) => setDeletingGroupId(groupId),
+    mutationFn: ({ groupId, stepUp }: { groupId: string; stepUp: StepUpCredentials }) =>
+      userGroupsApi.remove(groupId, stepUp),
+    onMutate: ({ groupId }) => setDeletingGroupId(groupId),
     onSettled: () => setDeletingGroupId(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-groups'] });
       toast.success(t('userGroups.deleteSuccess'));
+      setDeleteTarget(null);
+      setDeleteStepUpError('');
     },
     onError: (err: unknown) => {
-      toast.error(getErrorMessage(err, t('userGroups.deleteFailed')));
+      const msg = getErrorMessage(err, t('userGroups.deleteFailed'));
+      setDeleteStepUpError(msg);
+      toast.error(msg);
     },
   });
 
@@ -189,19 +198,8 @@ export function UserGroups() {
                     aria-label={t('userGroups.deleteGroup', { name: group.name })}
                     disabled={deletingGroupId === group.id}
                     onClick={() => {
-                      void (async () => {
-                        // Deleting cascades to membership, revoking access from
-                        // everyone who held it — worth one confirmation.
-                        const ok = await confirmDialog({
-                          title: t('userGroups.deleteGroup', { name: group.name }),
-                          description: t('userGroups.deleteConfirm', { name: group.name }),
-                          confirmLabel: t('common.delete'),
-                          variant: 'danger',
-                        });
-                        if (ok) {
-                          remove.mutate(group.id);
-                        }
-                      })();
+                      setDeleteStepUpError('');
+                      setDeleteTarget(group);
                     }}
                   >
                     {deletingGroupId === group.id ? (
@@ -283,6 +281,31 @@ export function UserGroups() {
           onClose={() => setMembersGroup(null)}
         />
       )}
+
+      <StepUpConfirmModal
+        open={deleteTarget !== null}
+        onClose={() => {
+          if (!remove.isPending) {
+            setDeleteTarget(null);
+            setDeleteStepUpError('');
+          }
+        }}
+        title={deleteTarget ? t('userGroups.deleteGroup', { name: deleteTarget.name }) : ''}
+        description={
+          deleteTarget ? t('userGroups.deleteConfirm', { name: deleteTarget.name }) : undefined
+        }
+        confirmLabel={t('common.delete')}
+        pendingLabel={t('common.deleting')}
+        variant="danger"
+        pending={remove.isPending}
+        error={deleteStepUpError}
+        onConfirm={(stepUp) => {
+          if (deleteTarget) {
+            setDeleteStepUpError('');
+            remove.mutate({ groupId: deleteTarget.id, stepUp });
+          }
+        }}
+      />
     </div>
   );
 }
@@ -299,10 +322,14 @@ function GroupEditor({
   onSaved: (wasEditing: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const { user: currentUser } = useAuth();
+  const actorTwoFactorEnabled = Boolean(currentUser?.two_factor_enabled);
   const [name, setName] = useState(group?.name ?? '');
   const [description, setDescription] = useState(group?.description ?? '');
   const [isActive, setIsActive] = useState(group?.is_active ?? true);
   const [selected, setSelected] = useState<PermissionKey[]>(group?.permissions ?? []);
+  const [actorPassword, setActorPassword] = useState('');
+  const [actorTotpCode, setActorTotpCode] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const hasPreparePermission = selected.some((k) => PAYROLL_PREPARE_PERMISSIONS.has(k));
@@ -316,18 +343,26 @@ function GroupEditor({
     mutationFn: async () => {
       const trimmedName = name.trim();
       const trimmedDesc = description.trim();
+      const stepUp: StepUpCredentials = {
+        actor_password: actorPassword,
+        ...(actorTwoFactorEnabled && actorTotpCode.trim()
+          ? { actor_totp_code: actorTotpCode.trim() }
+          : {}),
+      };
       if (group) {
         return userGroupsApi.update(group.id, {
           name: trimmedName,
           description: trimmedDesc,
           is_active: isActive,
           permissions: selected,
+          ...stepUp,
         });
       }
       return userGroupsApi.create({
         name: trimmedName,
         description: trimmedDesc || undefined,
         permissions: selected,
+        ...stepUp,
       });
     },
     onSuccess: () => onSaved(Boolean(group)),
@@ -347,6 +382,14 @@ function GroupEditor({
     e.preventDefault();
     if (!name.trim()) {
       setError(t('validation.required'));
+      return;
+    }
+    if (!actorPassword) {
+      setError(t('users.errors.actorPasswordRequired'));
+      return;
+    }
+    if (actorTwoFactorEnabled && !actorTotpCode.trim()) {
+      setError(t('users.errors.actorTotpRequired'));
       return;
     }
     setError(null);
@@ -388,7 +431,12 @@ function GroupEditor({
             type="submit"
             form="group-editor-form"
             className="btn-primary inline-flex items-center justify-center gap-2"
-            disabled={!name.trim() || save.isPending}
+            disabled={
+              !name.trim() ||
+              !actorPassword ||
+              (actorTwoFactorEnabled && !actorTotpCode.trim()) ||
+              save.isPending
+            }
           >
             {save.isPending ? (
               <>
@@ -507,6 +555,40 @@ function GroupEditor({
             );
           })}
         </div>
+
+        <div className="space-y-4 pt-3 border-t border-gray-200 dark:border-slate-700">
+          <FormField label={t('users.confirmWithYourPassword')} required>
+            {(aria) => (
+              <input
+                {...aria}
+                type="password"
+                value={actorPassword}
+                onChange={(e) => setActorPassword(e.target.value)}
+                placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+                className="form-input"
+                autoComplete="current-password"
+                required
+              />
+            )}
+          </FormField>
+          {actorTwoFactorEnabled && (
+            <FormField label={t('auth.twoFactor.title')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  value={actorTotpCode}
+                  onChange={(e) => setActorTotpCode(e.target.value)}
+                  placeholder="123456"
+                  className="form-input text-center tracking-widest"
+                  required
+                />
+              )}
+            </FormField>
+          )}
+        </div>
       </form>
     </Modal>
   );
@@ -529,6 +611,8 @@ function GroupMembersModal({
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [addingUserId, setAddingUserId] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+  const [pendingAddUser, setPendingAddUser] = useState<{ id: string; full_name: string } | null>(null);
+  const [addStepUpError, setAddStepUpError] = useState('');
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -547,16 +631,21 @@ function GroupMembersModal({
   });
 
   const addMutation = useMutation({
-    mutationFn: (userId: string) => userGroupsApi.addMember(group.id, userId),
-    onMutate: (userId) => setAddingUserId(userId),
+    mutationFn: ({ userId, stepUp }: { userId: string; stepUp: StepUpCredentials }) =>
+      userGroupsApi.addMember(group.id, userId, stepUp),
+    onMutate: ({ userId }) => setAddingUserId(userId),
     onSettled: () => setAddingUserId(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-group-members', group.id] });
       queryClient.invalidateQueries({ queryKey: ['user-groups'] });
       toast.success(t('userGroups.memberAdded'));
+      setPendingAddUser(null);
+      setAddStepUpError('');
     },
     onError: (err: unknown) => {
-      toast.error(getErrorMessage(err, t('userGroups.addMemberFailed')));
+      const msg = getErrorMessage(err, t('userGroups.addMemberFailed'));
+      setAddStepUpError(msg);
+      toast.error(msg);
     },
   });
 
@@ -714,7 +803,10 @@ function GroupMembersModal({
                     <button
                       type="button"
                       disabled={addingUserId === u.id}
-                      onClick={() => addMutation.mutate(u.id)}
+                      onClick={() => {
+                        setAddStepUpError('');
+                        setPendingAddUser({ id: u.id, full_name: u.full_name });
+                      }}
                       aria-label={t('userGroups.addMemberName', { name: u.full_name })}
                       className="btn-secondary text-xs min-h-11 sm:min-h-9 shrink-0 inline-flex items-center gap-1.5"
                     >
@@ -732,6 +824,32 @@ function GroupMembersModal({
           </div>
         )}
       </div>
+
+      <StepUpConfirmModal
+        open={pendingAddUser !== null}
+        onClose={() => {
+          if (!addMutation.isPending) {
+            setPendingAddUser(null);
+            setAddStepUpError('');
+          }
+        }}
+        title={t('userGroups.confirmAddMemberTitle')}
+        description={
+          pendingAddUser
+            ? t('userGroups.addMemberConfirm', { name: pendingAddUser.full_name })
+            : undefined
+        }
+        confirmLabel={t('common.add')}
+        pendingLabel={t('common.adding')}
+        pending={addMutation.isPending}
+        error={addStepUpError}
+        onConfirm={(stepUp) => {
+          if (pendingAddUser) {
+            setAddStepUpError('');
+            addMutation.mutate({ userId: pendingAddUser.id, stepUp });
+          }
+        }}
+      />
     </Modal>
   );
 }

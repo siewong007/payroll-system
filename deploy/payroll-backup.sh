@@ -21,6 +21,7 @@ umask 077
 readonly APP_DIR="/opt/payroll"
 readonly BACKUP_DIR="$APP_DIR/backups"
 readonly LOG_DIR="$APP_DIR/logs"
+readonly BACKUP_ENV_FILE="$APP_DIR/backup.env"
 readonly LOCAL_KEEP=14
 readonly CONTAINER="payroll-db"
 
@@ -37,7 +38,11 @@ touch "$LOG_DIR/backup.log" && chmod 0640 "$LOG_DIR/backup.log" 2>/dev/null || t
 command -v flock >/dev/null || die "flock is not installed"
 
 # One backup at a time, ever. A second concurrent run would race the prune.
-exec 9>/run/payroll-backup.lock
+lock_path="/run/payroll-backup.lock"
+if [[ -d /run/payroll-backup && -w /run/payroll-backup ]]; then
+  lock_path="/run/payroll-backup/lock"
+fi
+exec 9>"$lock_path"
 flock -n 9 || exit 0
 
 docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null \
@@ -46,7 +51,8 @@ docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null \
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 final="$BACKUP_DIR/nightly-$timestamp.dump"
 tmp_dump=$(mktemp "$BACKUP_DIR/.nightly.XXXXXX")
-cleanup() { rm -f -- "$tmp_dump"; }
+tmp_enc=""
+cleanup() { rm -f -- "$tmp_dump" "${tmp_enc:-}"; }
 trap cleanup EXIT
 
 log "Starting database dump"
@@ -65,13 +71,38 @@ tables=$(docker exec -i "$CONTAINER" pg_restore --list < "$tmp_dump" \
   | grep -c 'TABLE DATA' || true)
 (( tables > 0 )) || die "dump contains no table data"
 
-chmod 0600 "$tmp_dump"
-mv -- "$tmp_dump" "$final"
+BACKUP_AGE_RECIPIENT=""
+if [[ -r "$BACKUP_ENV_FILE" ]]; then
+  raw_rec_line=$(grep -m1 -E '^[[:space:]]*BACKUP_AGE_RECIPIENT=' "$BACKUP_ENV_FILE" 2>/dev/null || true)
+  if [[ -n "$raw_rec_line" ]]; then
+    raw_rec=${raw_rec_line#*=}
+    raw_rec=${raw_rec%$'\r'}
+    raw_rec=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"$raw_rec")
+    if [[ ( $raw_rec == \"*\" && $raw_rec == *\" ) || ( $raw_rec == \'*\' && $raw_rec == *\' ) ]]; then
+      raw_rec=${raw_rec:1:${#raw_rec}-2}
+    fi
+    BACKUP_AGE_RECIPIENT=$raw_rec
+  fi
+fi
+
+if [[ -n "$BACKUP_AGE_RECIPIENT" ]]; then
+  command -v age >/dev/null || die "BACKUP_AGE_RECIPIENT is set but 'age' is not installed"
+  tmp_enc=$(mktemp "$BACKUP_DIR/.nightly.age.XXXXXX")
+  age -r "$BACKUP_AGE_RECIPIENT" -o "$tmp_enc" "$tmp_dump"
+  chmod 0600 "$tmp_enc"
+  final="${final}.age"
+  mv -- "$tmp_enc" "$final"
+  rm -f -- "$tmp_dump"
+  tmp_enc=""
+else
+  chmod 0600 "$tmp_dump"
+  mv -- "$tmp_dump" "$final"
+fi
 trap - EXIT
 log "Verified $final ($dump_bytes bytes, $tables tables with data)"
 
 mapfile -t old < <(
-  find "$BACKUP_DIR" -maxdepth 1 -type f -name 'nightly-*.dump' -printf '%T@ %p\n' \
+  find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'nightly-*.dump' -o -name 'nightly-*.dump.age' \) -printf '%T@ %p\n' \
     | sort -nr | cut -d' ' -f2-
 )
 for ((i = LOCAL_KEEP; i < ${#old[@]}; i++)); do

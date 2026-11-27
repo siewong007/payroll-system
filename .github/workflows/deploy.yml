@@ -62,13 +62,14 @@ jobs:
             echo "Skipping superseded commit $CANDIDATE_SHA; $HEAD_BRANCH is $latest_sha."
           fi
 
-  deploy-frontend:
-    name: Build and deploy to the AIC VPS
+  build-frontend:
+    name: Build SPA bundle
     needs: gate
     if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: production
+    timeout-minutes: 10
+    outputs:
+      tarball_sha256: ${{ steps.package.outputs.tarball_sha256 }}
     env:
       DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
 
@@ -90,6 +91,52 @@ jobs:
           bun run build
           test -f dist/index.html
 
+      - name: Package frontend archive
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          bundle="$RUNNER_TEMP/payroll-frontend-$DEPLOY_SHA.tar.gz"
+          tar -C frontend/dist -czf "$bundle" .
+          tarball_sha256=$(sha256sum "$bundle" | awk '{print $1}')
+          printf 'tarball_sha256=%s\n' "$tarball_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frontend-bundle-${{ needs.gate.outputs.sha }}
+          path: ${{ runner.temp }}/payroll-frontend-${{ needs.gate.outputs.sha }}.tar.gz
+          retention-days: 1
+
+  deploy-frontend:
+    name: Deploy SPA to the AIC VPS
+    needs: [gate, build-frontend]
+    if: needs.gate.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+      TARBALL_SHA256: ${{ needs.build-frontend.outputs.tarball_sha256 }}
+
+    steps:
+      - name: Download frontend artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frontend-bundle-${{ needs.gate.outputs.sha }}
+          path: ${{ runner.temp }}/bundle
+
+      - name: Verify frontend archive checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TARBALL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          bundle="$RUNNER_TEMP/bundle/payroll-frontend-$DEPLOY_SHA.tar.gz"
+          test -f "$bundle"
+          printf '%s  %s\n' "$TARBALL_SHA256" "$bundle" | sha256sum --check --status -
+
       - name: Configure pinned SSH access
         shell: bash
         env:
@@ -104,12 +151,21 @@ jobs:
           ssh-keygen -lf "$RUNNER_TEMP/vps-known-hosts" \
             | grep -Fq 'SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw'
 
-      - name: Upload SPA to the VPS
+      - name: Upload SPA to private VPS staging directory
         shell: bash
         run: |
           set -euo pipefail
-          bundle="$RUNNER_TEMP/payroll-frontend-$DEPLOY_SHA.tar.gz"
-          tar -C frontend/dist -czf "$bundle" .
+          bundle="$RUNNER_TEMP/bundle/payroll-frontend-$DEPLOY_SHA.tar.gz"
+          ssh \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "install -d -m 0700 -o root -g root /opt/payroll /opt/payroll/.incoming"
           scp \
             -i "$RUNNER_TEMP/vps-key" \
             -P "$VPS_PORT" \
@@ -119,9 +175,9 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$bundle" \
-            "$VPS_USER@$VPS_HOST:/tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part"
+            "$VPS_USER@$VPS_HOST:/opt/payroll/.incoming/payroll-frontend-$DEPLOY_SHA.tar.gz.part"
 
-      - name: Activate the new site tree
+      - name: Verify archive and activate the new site tree
         shell: bash
         run: |
           set -euo pipefail
@@ -136,10 +192,13 @@ jobs:
             "$VPS_USER@$VPS_HOST" \
             "set -euo pipefail
              incoming=''
-             trap 'rm -rf \"\${incoming:-}\" /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz' EXIT
-             mv /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz
+             staging='/opt/payroll/.incoming'
+             archive=\"\$staging/payroll-frontend-$DEPLOY_SHA.tar.gz\"
+             trap 'rm -rf \"\${incoming:-}\" \"\$archive.part\" \"\$archive\"' EXIT
+             printf '%s  %s\n' '$TARBALL_SHA256' \"\$archive.part\" | sha256sum --check --status -
+             mv \"\$archive.part\" \"\$archive\"
              incoming=\$(mktemp -d /opt/payrollmy-site.incoming.XXXXXX)
-             tar -xzf /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz -C \"\$incoming\"
+             tar --no-same-owner --no-same-permissions -xzf \"\$archive\" -C \"\$incoming\"
              test -f \"\$incoming/index.html\"
              chmod -R a+rX \"\$incoming\"
              rm -rf /opt/payrollmy-site.prev
@@ -170,6 +229,24 @@ jobs:
             https://payrollmy.com/sw.js)
           printf '%s' "$sw_headers" | grep -qiE '^content-type:.*javascript'
           echo "Public HTTPS + PWA manifest/SW checks passed through Cloudflare."
+
+      - name: Remove remote staging files
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s "$RUNNER_TEMP/vps-key" && -s "$RUNNER_TEMP/vps-known-hosts" ]]; then
+            ssh \
+              -i "$RUNNER_TEMP/vps-key" \
+              -p "$VPS_PORT" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+              "$VPS_USER@$VPS_HOST" \
+              "rm -f -- /opt/payroll/.incoming/payroll-frontend-$DEPLOY_SHA.tar.gz.part /opt/payroll/.incoming/payroll-frontend-$DEPLOY_SHA.tar.gz" \
+              || true
+          fi
 
       - name: Remove ephemeral SSH key
         if: always()

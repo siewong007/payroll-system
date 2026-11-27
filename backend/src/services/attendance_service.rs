@@ -23,7 +23,7 @@ use crate::repositories::reads::attendance as attendance_reads;
 use crate::repositories::{
     attendance_kiosk_credentials, attendance_qr_tokens, attendance_records, audit_logs, clock,
     companies, company_work_schedules, employee_work_schedules, employees, passkey_challenges,
-    platform_settings,
+    payroll_runs, platform_settings, users,
 };
 use crate::services::audit_service::{self, AuditRequestMeta};
 use crate::services::{
@@ -243,7 +243,7 @@ async fn mint_qr_token_on(
     .await?;
 
     let scan_url = format!(
-        "{}/attendance/scan?token={}",
+        "{}/attendance/scan#token={}",
         frontend_url.trim_end_matches('/'),
         token
     );
@@ -620,6 +620,9 @@ pub async fn check_in_qr(
     longitude: Option<f64>,
     client_ip: Option<IpAddr>,
 ) -> AppResult<AttendanceRecord> {
+    // Validate the QR token first so expired/revoked tokens fail fast without
+    // running geofence or network checks or counting against denied_count.
+    let (token_id, kiosk_minted) = validate_qr_token_details(pool, token, company_id).await?;
     let tz = get_company_timezone(pool, company_id).await;
     ensure_no_active_checkin(pool, employee_id, &tz).await?;
 
@@ -634,11 +637,13 @@ pub async fn check_in_qr(
         attendance_network_service::validate_for_checkin(pool, company_id, employee_id, client_ip)
             .await?;
 
-    let (token_id, kiosk_minted) = validate_qr_token_details(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
 
     let record = insert_checkin(pool, employee_id, &tz, || async {
         let mut tx = pool.begin().await?;
+        // Lock the employee row in the same order as auto-absent `mark_absent_returning`
+        // so check-in and auto-absent serialize cleanly without concurrent phantoms.
+        employees::lock_for_update(&mut *tx, employee_id, company_id).await?;
         let record = attendance_records::insert_qr(
             &mut *tx,
             company_id,
@@ -708,6 +713,7 @@ pub async fn check_in_face_id(
 
     let record = insert_checkin(pool, employee_id, &tz, || async {
         let mut tx = pool.begin().await?;
+        employees::lock_for_update(&mut *tx, employee_id, company_id).await?;
         let record = attendance_records::insert_face(
             &mut *tx,
             company_id,
@@ -908,6 +914,18 @@ pub async fn manual_attendance(
         ));
     }
 
+    let is_self_target =
+        users::is_employee_owned_by_user(pool, created_by, req.employee_id, company_id).await?;
+    let actor_is_super_admin = users::get_by_id(pool, created_by)
+        .await?
+        .is_some_and(|u| u.roles.iter().any(|r| r == "super_admin"));
+    if is_self_target && !actor_is_super_admin {
+        return Err(AppError::Forbidden(
+            "You cannot create manual attendance records for yourself. Ask another administrator, or a super admin, to record it."
+                .into(),
+        ));
+    }
+
     let status = req.status.as_deref().unwrap_or("present");
     if !matches!(status, "present" | "late" | "absent" | "half_day") {
         return Err(AppError::BadRequest(
@@ -915,9 +933,15 @@ pub async fn manual_attendance(
         ));
     }
     let check_out_at = normalize_absent_check_out(status, req.check_in_at, req.check_out_at);
-    if check_out_at.is_none() && req.check_in_at > Utc::now() {
+    let now = Utc::now();
+    if check_out_at.is_none() && req.check_in_at > now {
         return Err(AppError::BadRequest(
             "An open attendance record cannot have a future check-in time".into(),
+        ));
+    }
+    if req.check_in_at > now || check_out_at.is_some_and(|check_out| check_out > now) {
+        return Err(AppError::BadRequest(
+            "Attendance check-in and check-out times cannot be in the future".into(),
         ));
     }
     if check_out_at.is_some_and(|check_out| check_out < req.check_in_at) {
@@ -926,6 +950,27 @@ pub async fn manual_attendance(
         ));
     }
     validate_correction_span(req.check_in_at, check_out_at)?;
+
+    let tz_str = get_company_timezone(pool, company_id).await;
+    let zone = timezone::parse(&tz_str).unwrap_or(Tz::Asia__Kuala_Lumpur);
+    let start_date = req.check_in_at.with_timezone(&zone).date_naive();
+    let end_date = check_out_at
+        .map(|co| co.with_timezone(&zone).date_naive())
+        .unwrap_or(start_date);
+    if payroll_runs::has_non_draft_covering_dates(
+        pool,
+        company_id,
+        req.employee_id,
+        start_date.min(end_date),
+        start_date.max(end_date),
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "Manual attendance cannot be added for a date covered by a submitted or finalized payroll run"
+                .into(),
+        ));
+    }
 
     let record = match attendance_records::insert_manual(
         pool,
@@ -963,6 +1008,26 @@ pub async fn manual_attendance(
         audit_meta,
     )
     .await;
+
+    if is_self_target && actor_is_super_admin {
+        let _ = audit_service::log_action_with_metadata(
+            pool,
+            Some(company_id),
+            Some(created_by),
+            "self_attendance_override",
+            "attendance_record",
+            Some(record.id),
+            None,
+            Some(serde_json::json!({
+                "employee_id": record.employee_id,
+                "action": "manual_attendance",
+                "self_target": true,
+            })),
+            Some("Super admin created manual attendance for own employee record (override logged)"),
+            audit_meta,
+        )
+        .await;
+    }
 
     Ok(record)
 }
@@ -1015,6 +1080,9 @@ pub async fn update_attendance_record(
         )));
     }
 
+    let tz_str = get_company_timezone(pool, company_id).await;
+    let zone = timezone::parse(&tz_str).unwrap_or(Tz::Asia__Kuala_Lumpur);
+
     // Lock, read, update, and audit atomically inside a transaction so concurrent
     // corrections to the same record cannot lose an update or compute stale hours.
     let mut tx = pool.begin().await?;
@@ -1022,6 +1090,19 @@ pub async fn update_attendance_record(
     let existing = attendance_records::get_by_id_locked(&mut *tx, record_id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Attendance record not found".into()))?;
+
+    let is_self_target =
+        users::is_employee_owned_by_user(&mut *tx, updated_by, existing.employee_id, company_id)
+            .await?;
+    let actor_is_super_admin = users::get_by_id(&mut *tx, updated_by)
+        .await?
+        .is_some_and(|u| u.roles.iter().any(|r| r == "super_admin"));
+    if is_self_target && !actor_is_super_admin {
+        return Err(AppError::Forbidden(
+            "You cannot modify your own attendance record. Ask another administrator, or a super admin, to correct it."
+                .into(),
+        ));
+    }
 
     let check_in = req.check_in_at.unwrap_or(existing.check_in_at);
     let status = req.status.as_deref().unwrap_or(&existing.status);
@@ -1048,6 +1129,13 @@ pub async fn update_attendance_record(
         ));
     }
 
+    let now = Utc::now();
+    if check_in > now || check_out.is_some_and(|value| value > now) {
+        return Err(AppError::BadRequest(
+            "Attendance check-in and check-out times cannot be in the future".into(),
+        ));
+    }
+
     if check_out.is_some_and(|value| value < check_in) {
         return Err(AppError::BadRequest(
             "Check-out time must not be before check-in time".into(),
@@ -1055,6 +1143,38 @@ pub async fn update_attendance_record(
     }
 
     validate_correction_span(check_in, check_out)?;
+
+    let old_start = existing.check_in_at.with_timezone(&zone).date_naive();
+    let old_end = existing
+        .check_out_at
+        .map(|co| co.with_timezone(&zone).date_naive())
+        .unwrap_or(old_start);
+    let new_start = check_in.with_timezone(&zone).date_naive();
+    let new_end = check_out
+        .map(|co| co.with_timezone(&zone).date_naive())
+        .unwrap_or(new_start);
+    if payroll_runs::has_non_draft_covering_dates(
+        &mut *tx,
+        company_id,
+        existing.employee_id,
+        old_start.min(old_end),
+        old_start.max(old_end),
+    )
+    .await?
+        || payroll_runs::has_non_draft_covering_dates(
+            &mut *tx,
+            company_id,
+            existing.employee_id,
+            new_start.min(new_end),
+            new_start.max(new_end),
+        )
+        .await?
+    {
+        return Err(AppError::BadRequest(
+            "Attendance record cannot be modified for a date covered by a submitted or finalized payroll run"
+                .into(),
+        ));
+    }
 
     let record = match attendance_records::update(
         &mut *tx, record_id, company_id, check_in, check_out, status, notes,
@@ -1122,6 +1242,28 @@ pub async fn update_attendance_record(
         audit_meta.and_then(|meta| meta.user_agent.as_deref()),
     )
     .await?;
+
+    if is_self_target && actor_is_super_admin {
+        let override_vals = serde_json::json!({
+            "employee_id": record.employee_id,
+            "action": "update_attendance_record",
+            "self_target": true,
+        });
+        audit_logs::insert(
+            &mut *tx,
+            Some(company_id),
+            Some(updated_by),
+            "self_attendance_override",
+            "attendance_record",
+            Some(record_id),
+            None,
+            Some(override_vals),
+            Some("Super admin modified own attendance record (override logged)"),
+            audit_meta.and_then(|meta| meta.ip_address.as_deref()),
+            audit_meta.and_then(|meta| meta.user_agent.as_deref()),
+        )
+        .await?;
+    }
 
     tx.commit().await?;
 

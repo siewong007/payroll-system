@@ -63,12 +63,21 @@ async fn seed_user_with_password(
     seed_user_with_role_and_password(pool, company_id, "admin", email, password).await
 }
 
-fn json_request(method: &str, uri: &str, token: Option<&str>, body: &str) -> Request<Body> {
+fn json_request_from_ip(
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: &str,
+    last_octet: u8,
+) -> Request<Body> {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
-        .header("x-forwarded-for", "203.0.113.10, 10.0.0.1")
+        .header(
+            "x-forwarded-for",
+            format!("203.0.113.{last_octet}, 10.0.0.1"),
+        )
         .header(header::USER_AGENT, "PayrollTotpTest/1.0");
     if let Some(token) = token {
         builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
@@ -78,9 +87,15 @@ fn json_request(method: &str, uri: &str, token: Option<&str>, body: &str) -> Req
         .expect("build request");
     // tower_governor's default PeerIpKeyExtractor reads this extension —
     // never populated when testing via `Router::oneshot` (no real listener).
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([203, 0, 113, 10], 12345))));
+    req.extensions_mut().insert(ConnectInfo(SocketAddr::from((
+        [203, 0, 113, last_octet],
+        12345,
+    ))));
     req
+}
+
+fn json_request(method: &str, uri: &str, token: Option<&str>, body: &str) -> Request<Body> {
+    json_request_from_ip(method, uri, token, body, 10)
 }
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -679,18 +694,23 @@ async fn code_login_rejects_privileged_roles_and_isolates_lockout_counters() {
     let company_id = seed_company(&pool).await;
     let app = app_for(pool.clone()).await;
 
-    for role in [
+    for (idx, role) in [
         "admin",
+        "manager",
         "payroll_admin",
         "hr_manager",
         "finance",
+        "exec",
         "super_admin",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let (_id, email, secret, _codes) =
             enroll_and_get_secret_for_role(&pool, company_id, role).await;
         let resp = app
             .clone()
-            .oneshot(json_request(
+            .oneshot(json_request_from_ip(
                 "POST",
                 "/api/auth/login/code",
                 None,
@@ -698,6 +718,7 @@ async fn code_login_rejects_privileged_roles_and_isolates_lockout_counters() {
                     r#"{{"email":"{email}","code":"{}"}}"#,
                     code_for_secret(&secret)
                 ),
+                20 + idx as u8,
             ))
             .await
             .expect("privileged code login attempt");
@@ -762,8 +783,9 @@ async fn startup_reencryption_migrates_legacy_rows_and_is_idempotent() {
         .await
         .expect("find row")
         .expect("row exists");
-    let decrypted = crypto::decrypt_secret(&row.secret_encrypted, TOTP_ENCRYPTION_KEY)
-        .expect("decrypt under dedicated key");
+    let decrypted =
+        crypto::decrypt_secret_for_user(&row.secret_encrypted, TOTP_ENCRYPTION_KEY, user_id)
+            .expect("decrypt under dedicated key");
     assert_eq!(decrypted, secret_b32);
     // The legacy derivation must no longer be able to read it either way.
     assert!(crypto::decrypt_with_legacy_jwt_derivation(&row.secret_encrypted, JWT_SECRET).is_err());

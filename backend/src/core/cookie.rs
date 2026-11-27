@@ -86,10 +86,29 @@ pub fn clear_refresh_cookie(frontend_url: &str) -> (header::HeaderName, String) 
     (header::SET_COOKIE, value)
 }
 
-/// Extract the refresh token from the Cookie header (`__Secure-refresh_token` first, then `refresh_token`).
-pub fn extract_refresh_token(headers: &HeaderMap) -> Option<String> {
-    cookie_value(headers, SECURE_REFRESH_COOKIE_NAME)
-        .or_else(|| cookie_value(headers, REFRESH_COOKIE_NAME))
+/// Build Set-Cookie header(s) clearing the active refresh cookie and, on HTTPS
+/// deployments, also flushing any legacy/tossed unprefixed cookie of the same name.
+pub fn clear_refresh_cookie_headers(frontend_url: &str) -> Vec<(header::HeaderName, String)> {
+    let mut out = vec![clear_refresh_cookie(frontend_url)];
+    if is_https_frontend(frontend_url) {
+        out.push((
+            header::SET_COOKIE,
+            format!("{REFRESH_COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/api/auth; Max-Age=0"),
+        ));
+    }
+    out
+}
+
+/// Extract the refresh token from the Cookie header. When served over HTTPS, only
+/// `__Secure-refresh_token` is trusted — never falling back to an unprefixed
+/// `refresh_token` that an HTTP MitM could have tossed.
+pub fn extract_refresh_token(headers: &HeaderMap, frontend_url: &str) -> Option<String> {
+    if is_https_frontend(frontend_url) {
+        cookie_value(headers, SECURE_REFRESH_COOKIE_NAME)
+    } else {
+        cookie_value(headers, SECURE_REFRESH_COOKIE_NAME)
+            .or_else(|| cookie_value(headers, REFRESH_COOKIE_NAME))
+    }
 }
 
 /// Build a Set-Cookie header carrying the OAuth2 state binder.
@@ -125,10 +144,30 @@ pub fn clear_oauth_state_cookie(frontend_url: &str) -> (header::HeaderName, Stri
     (header::SET_COOKIE, value)
 }
 
-/// Extract the OAuth2 state binder from the Cookie header (`__Secure-oauth2_binder` first, then `oauth2_binder`).
-pub fn extract_oauth_state_binder(headers: &HeaderMap) -> Option<String> {
-    cookie_value(headers, SECURE_OAUTH_STATE_COOKIE_NAME)
-        .or_else(|| cookie_value(headers, OAUTH_STATE_COOKIE_NAME))
+/// Build Set-Cookie header(s) clearing the OAuth2 state binder cookie and, on HTTPS
+/// deployments, also flushing any unprefixed `oauth2_binder` cookie.
+pub fn clear_oauth_state_cookie_headers(frontend_url: &str) -> Vec<(header::HeaderName, String)> {
+    let mut out = vec![clear_oauth_state_cookie(frontend_url)];
+    if is_https_frontend(frontend_url) {
+        out.push((
+            header::SET_COOKIE,
+            format!(
+                "{OAUTH_STATE_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path={OAUTH_STATE_PATH}; Max-Age=0"
+            ),
+        ));
+    }
+    out
+}
+
+/// Extract the OAuth2 state binder from the Cookie header. Over HTTPS, only
+/// `__Secure-oauth2_binder` is trusted.
+pub fn extract_oauth_state_binder(headers: &HeaderMap, frontend_url: &str) -> Option<String> {
+    if is_https_frontend(frontend_url) {
+        cookie_value(headers, SECURE_OAUTH_STATE_COOKIE_NAME)
+    } else {
+        cookie_value(headers, SECURE_OAUTH_STATE_COOKIE_NAME)
+            .or_else(|| cookie_value(headers, OAUTH_STATE_COOKIE_NAME))
+    }
 }
 
 fn origin_tuple(raw: &str) -> Option<(String, String, Option<u16>)> {
@@ -142,21 +181,34 @@ fn origin_tuple(raw: &str) -> Option<(String, String, Option<u16>)> {
 }
 
 /// Defense-in-depth CSRF origin validation for cookie-authenticated endpoints
-/// (`/auth/refresh`, `/auth/logout`): blocks `Sec-Fetch-Site: cross-site` and
-/// rejects any mismatched `Origin` or `Referer` against `frontend_url`.
+/// (`/auth/refresh`, `/auth/logout`): blocks `Sec-Fetch-Site: cross-site`,
+/// rejects non-JSON simple POSTs, rejects mismatched `Origin` or `Referer`, and
+/// fails closed on HTTPS deployments when origin verification headers are absent.
 pub fn validate_cookie_csrf_origin(headers: &HeaderMap, frontend_url: &str) -> AppResult<()> {
-    if let Some(sec_fetch_site) = headers
+    let sec_fetch_site = headers
         .get("sec-fetch-site")
         .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        && sec_fetch_site.eq_ignore_ascii_case("cross-site")
+        .map(str::trim);
+    if let Some(sfs) = sec_fetch_site
+        && sfs.eq_ignore_ascii_case("cross-site")
     {
         return Err(AppError::Forbidden("Cross-site request rejected".into()));
     }
 
-    let Some(expected) = origin_tuple(frontend_url) else {
-        return Ok(());
-    };
+    if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
+        let ct = content_type
+            .to_str()
+            .map_err(|_| AppError::Forbidden("Invalid Content-Type header".into()))?;
+        let media = ct.split(';').next().unwrap_or("").trim();
+        if !media.eq_ignore_ascii_case("application/json") {
+            return Err(AppError::Forbidden(
+                "Requests to this endpoint must use application/json".into(),
+            ));
+        }
+    }
+
+    let expected = origin_tuple(frontend_url)
+        .ok_or_else(|| AppError::Internal("Invalid FRONTEND_URL configuration".into()))?;
 
     if let Some(origin_raw) = headers.get(header::ORIGIN) {
         let origin_str = origin_raw
@@ -181,6 +233,15 @@ pub fn validate_cookie_csrf_origin(headers: &HeaderMap, frontend_url: &str) -> A
         if actual != expected {
             return Err(AppError::Forbidden("Untrusted request referer".into()));
         }
+        return Ok(());
+    }
+
+    if is_https_frontend(frontend_url)
+        && !sec_fetch_site.is_some_and(|s| s.eq_ignore_ascii_case("same-origin"))
+    {
+        return Err(AppError::Forbidden(
+            "Origin verification required for HTTPS requests".into(),
+        ));
     }
 
     Ok(())

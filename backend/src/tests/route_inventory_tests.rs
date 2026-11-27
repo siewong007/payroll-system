@@ -39,7 +39,6 @@ const PUBLIC_ROUTES: &[(&str, &str)] = &[
     // Passkey ceremony starts: they mint WebAuthn challenges and reveal
     // nothing — the pre-auth half of passkey login, like /auth/login itself.
     ("POST", "/api/auth/passkey/discoverable/begin"),
-    ("POST", "/api/auth/passkey/authenticate/begin"),
     ("POST", "/api/auth/oauth2/google/authorize"),
     // The callback redirects to the frontend error page unauthenticated —
     // it is the browser-facing end of an OAuth flow, never an API response.

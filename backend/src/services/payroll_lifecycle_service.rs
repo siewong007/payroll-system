@@ -290,7 +290,7 @@ pub async fn cancel(
         ));
     }
 
-    payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
+    payroll_entries::revert_for_run(&mut *tx, run_id, company_id).await?;
     claims::revert_for_run(&mut *tx, run_id, company_id).await?;
     overtime_applications::revert_for_run(&mut *tx, run_id, company_id).await?;
     // Bound to exact locked status so concurrent transitions cannot cross permissions.
@@ -425,7 +425,7 @@ pub async fn reverse_paid_run(
         ));
     }
 
-    payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
+    payroll_entries::revert_for_run(&mut *tx, run_id, company_id).await?;
     claims::revert_for_run(&mut *tx, run_id, company_id).await?;
     overtime_applications::revert_for_run(&mut *tx, run_id, company_id).await?;
     let run = payroll_runs::set_reversed(&mut *tx, run_id, company_id, actor_user_id, &reason)

@@ -37,6 +37,9 @@ pub const MAX_ICS_BYTES: usize = 2 * 1024 * 1024;
 /// Whole-request ceiling, connect included.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// DNS lookup ceiling so slow/stalled resolvers cannot wedge a worker.
+const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Separate and shorter, so a filtered (silently dropped) address fails fast
 /// instead of holding a worker for the full request budget.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -93,40 +96,26 @@ fn is_blocked_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_blocked_v6(ip: Ipv6Addr) -> bool {
-    // `::ffff:169.254.169.254` and `::ffff:127.0.0.1` are otherwise a clean
-    // bypass of the v4 policy, and both are dialable.
-    if let Some(v4) = ip.to_ipv4_mapped() {
-        return is_blocked_v4(v4);
-    }
-
+    // Strict global-unicast allowlist (`2000::/3`): rejects all IPv4-mapped
+    // (`::ffff:0:0/96`), IPv4-compatible (`::/96`), NAT64 (`64:ff9b::/96`),
+    // discard (`100::/64`), ULA (`fc00::/7`), link-local (`fe80::/10`), site-local,
+    // loopback, unspecified, and multicast addresses by default.
     let segments = ip.segments();
-
-    // `::a.b.c.d`, the deprecated IPv4-compatible form. Deprecated is not the
-    // same as unroutable, and `::1` lands here too (as 0.0.0.1, still blocked).
-    if segments[..6].iter().all(|&s| s == 0) {
-        let bits = (u32::from(segments[6]) << 16) | u32::from(segments[7]);
-        return is_blocked_v4(Ipv4Addr::from(bits));
-    }
-
-    // fc00::/7 unique local, fe80::/10 link local, fec0::/10 deprecated site-local,
-    // 2001:db8::/32 documentation, 2001:0000::/23 IETF protocol assignments
-    // (Teredo/benchmarking/ORCHIDv2; keeps 2001:4860:4860::8888 allowed),
-    // 2002::/16 6to4, 100::/64 discard, and 64:ff9b::/96 + 64:ff9b:1::/48 NAT64.
     let seg0 = segments[0];
     let seg1 = segments[1];
-    let unique_or_link_local =
-        (seg0 & 0xfe00) == 0xfc00 || (seg0 & 0xffc0) == 0xfe80 || (seg0 & 0xffc0) == 0xfec0;
-    let special_ranges = (seg0 == 0x2001 && seg1 == 0x0db8)
-        || (seg0 == 0x2001 && seg1 < 0x0200)
-        || seg0 == 0x2002
-        || (seg0 == 0x0100 && seg1 == 0 && segments[2] == 0 && segments[3] == 0)
-        || (seg0 == 0x0064 && seg1 == 0xff9b);
+    let is_global_unicast = (seg0 & 0xe000) == 0x2000;
+    if !is_global_unicast {
+        return true;
+    }
 
-    unique_or_link_local
-        || special_ranges
-        || ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
+    // Carve-outs inside 2000::/3:
+    // - 2001:db8::/32 documentation
+    // - 2001:0000::/23 IETF protocol assignments (Teredo 2001::/32, benchmarking 2001:2::/48, ORCHIDv2 2001:20::/28)
+    // - 2002::/16 deprecated 6to4 relays
+    let excluded_within_2000 =
+        (seg0 == 0x2001 && seg1 == 0x0db8) || (seg0 == 0x2001 && seg1 < 0x0200) || seg0 == 0x2002;
+
+    excluded_within_2000 || ip.is_unspecified() || ip.is_loopback() || ip.is_multicast()
 }
 
 /// Parse a tenant-supplied URL, or say precisely why it is not fetchable.
@@ -184,13 +173,22 @@ pub async fn fetch_public_text(raw: &str, max_bytes: usize) -> AppResult<String>
     let (domain, addrs) = match url.host() {
         Some(Host::Domain(domain)) => {
             let domain = domain.to_string();
-            let resolved: Vec<SocketAddr> = tokio::net::lookup_host((domain.as_str(), port))
-                .await
-                .map_err(|e| {
+            let resolved: Vec<SocketAddr> = match tokio::time::timeout(
+                DNS_LOOKUP_TIMEOUT,
+                tokio::net::lookup_host((domain.as_str(), port)),
+            )
+            .await
+            {
+                Ok(Ok(addrs)) => addrs.collect(),
+                Ok(Err(e)) => {
                     tracing::warn!("ICS fetch: could not resolve {}: {}", domain, e);
-                    unreachable_error()
-                })?
-                .collect();
+                    return Err(unreachable_error());
+                }
+                Err(_) => {
+                    tracing::warn!("ICS fetch: DNS resolution timed out for {}", domain);
+                    return Err(unreachable_error());
+                }
+            };
             (Some(domain), resolved)
         }
         // Already vetted by `parse_public_https_url`; re-checked below anyway so
@@ -356,10 +354,10 @@ mod tests {
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.1",
             "::169.254.169.254",
+            "::ffff:8.8.8.8",
         ] {
             assert!(is_blocked_ip(ip(blocked)), "allowed {blocked}");
         }
-        assert!(!is_blocked_ip(ip("::ffff:8.8.8.8")));
     }
 
     #[test]

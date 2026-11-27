@@ -63,7 +63,8 @@ die()  { printf '[migrate] ERROR: %s\n' "$*" >&2; exit 1; }
 warn() { printf '[migrate] WARNING: %s\n' "$*" >&2; }
 
 [[ $EUID -eq 0 ]] || die "run this script as root (sudo)"
-install -d -m 0750 "$APP_DIR" "$BACKUP_DIR"
+install -d -m 0750 "$APP_DIR"
+install -d -m 0700 "$BACKUP_DIR"
 
 compose() {
   if docker compose version >/dev/null 2>&1; then

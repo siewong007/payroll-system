@@ -176,7 +176,7 @@ describe('UserManagement — create form', () => {
 
     expect(screen.getByRole('textbox', { name: /full name/i })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /email/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^password/i)).toBeInTheDocument();
   });
 
   it('does not offer the employee role, which the backend refuses', async () => {
@@ -204,7 +204,7 @@ describe('UserManagement — create form', () => {
 
     await userEvent.type(screen.getByRole('textbox', { name: /full name/i }), 'New Person');
     await userEvent.type(screen.getByRole('textbox', { name: /email/i }), 'new@example.com');
-    await userEvent.type(screen.getByLabelText(/password/i), 'short1A');
+    await userEvent.type(screen.getByLabelText(/^password/i), 'short1A');
     await userEvent.click(screen.getByRole('checkbox', { name: 'Alpha Sdn Bhd' }));
 
     await userEvent.click(screen.getByRole('button', { name: 'Create User' }));
@@ -219,7 +219,7 @@ describe('UserManagement — create form', () => {
 
     await userEvent.type(screen.getByRole('textbox', { name: /full name/i }), 'New Person');
     await userEvent.type(screen.getByRole('textbox', { name: /email/i }), 'new@example.com');
-    await userEvent.type(screen.getByLabelText(/password/i), 'Str0ngPassword');
+    await userEvent.type(screen.getByLabelText(/^password/i), 'Str0ngPassword');
 
     await userEvent.click(screen.getByRole('button', { name: 'Create User' }));
 
@@ -253,8 +253,9 @@ describe('UserManagement — create form', () => {
 
     await userEvent.type(screen.getByRole('textbox', { name: /full name/i }), 'New Person');
     await userEvent.type(screen.getByRole('textbox', { name: /email/i }), 'dupe@example.com');
-    await userEvent.type(screen.getByLabelText(/password/i), 'Str0ngPassword');
+    await userEvent.type(screen.getByLabelText(/^password/i), 'Str0ngPassword');
     await userEvent.click(screen.getByRole('checkbox', { name: 'Alpha Sdn Bhd' }));
+    await userEvent.type(screen.getByLabelText(/confirm with your password/i), 'SuperSecret123!');
     await userEvent.click(screen.getByRole('button', { name: 'Create User' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/already exists/i);
@@ -367,6 +368,7 @@ describe('UserManagement — delete', () => {
     });
 
     await userEvent.click(within(table()).getByRole('button', { name: 'Delete Ahmad Target' }));
+    await userEvent.type(screen.getByLabelText(/confirm with your password/i), 'SuperSecret123!');
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/super admin must remain/i);
@@ -381,9 +383,14 @@ describe('UserManagement — delete', () => {
     adminMocks.deleteUser.mockResolvedValue({ ok: true });
 
     await userEvent.click(within(table()).getByRole('button', { name: 'Delete Ahmad Target' }));
+    await userEvent.type(screen.getByLabelText(/confirm with your password/i), 'SuperSecret123!');
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-    await waitFor(() => expect(adminMocks.deleteUser).toHaveBeenCalledWith('user-1'));
+    await waitFor(() =>
+      expect(adminMocks.deleteUser).toHaveBeenCalledWith('user-1', {
+        actor_password: 'SuperSecret123!',
+      }),
+    );
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });

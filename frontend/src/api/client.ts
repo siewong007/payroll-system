@@ -22,8 +22,14 @@ const api = axios.create({
 
 // Module-level token storage (in-memory only, not localStorage)
 let accessToken: string | null = null;
+let currentIdentity: { userId: string | null; companyId: string | null } = {
+  userId: null,
+  companyId: null,
+};
 type AuthRefreshedListener = (token: string, user: User) => void;
+type AuthIdentityListener = (user: User | null) => void;
 const authRefreshedListeners = new Set<AuthRefreshedListener>();
+const authIdentityChangedListeners = new Set<AuthIdentityListener>();
 
 export function onAuthRefreshed(listener: AuthRefreshedListener): () => void {
   authRefreshedListeners.add(listener);
@@ -32,8 +38,24 @@ export function onAuthRefreshed(listener: AuthRefreshedListener): () => void {
   };
 }
 
+export function onAuthIdentityChanged(listener: AuthIdentityListener): () => void {
+  authIdentityChangedListeners.add(listener);
+  return () => {
+    authIdentityChangedListeners.delete(listener);
+  };
+}
+
+export function setAuthIdentity(user: Pick<User, 'id' | 'company_id'> | null) {
+  currentIdentity = user
+    ? { userId: user.id, companyId: user.company_id }
+    : { userId: null, companyId: null };
+}
+
 export function setAccessToken(token: string | null) {
   accessToken = token;
+  if (token === null) {
+    currentIdentity = { userId: null, companyId: null };
+  }
 }
 
 export function getAccessToken(): string | null {
@@ -71,8 +93,6 @@ const NO_REFRESH_401_ENDPOINTS = [
   '/auth/2fa/backup-codes/regenerate',
   '/auth/oauth2/providers',
   '/auth/passkey/check',
-  '/auth/passkey/authenticate/begin',
-  '/auth/passkey/authenticate/complete',
   '/auth/passkey/discoverable/begin',
   '/auth/passkey/discoverable/complete',
   '/attendance/check-in/face-id',
@@ -183,10 +203,22 @@ api.interceptors.response.use(
     try {
       // Refresh token is sent automatically via httpOnly cookie
       const { data } = await axios.post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true });
+      const nextUser: User = data.user;
+      const identityChanged =
+        currentIdentity.userId !== null &&
+        (currentIdentity.userId !== nextUser.id || currentIdentity.companyId !== nextUser.company_id);
 
       accessToken = data.token;
-      localStorage.setItem('user', JSON.stringify(data.user));
-      authRefreshedListeners.forEach((listener) => listener(data.token, data.user));
+      currentIdentity = { userId: nextUser.id, companyId: nextUser.company_id };
+      localStorage.setItem('user', JSON.stringify(nextUser));
+      authRefreshedListeners.forEach((listener) => listener(data.token, nextUser));
+
+      if (identityChanged) {
+        authIdentityChangedListeners.forEach((listener) => listener(nextUser));
+        const identityError = new Error('Session identity changed');
+        processQueue(identityError, null);
+        return Promise.reject(identityError);
+      }
 
       processQueue(null, data.token);
       originalRequest.headers.Authorization = `Bearer ${data.token}`;
@@ -194,6 +226,7 @@ api.interceptors.response.use(
     } catch (refreshError) {
       processQueue(refreshError, null);
       accessToken = null;
+      currentIdentity = { userId: null, companyId: null };
       localStorage.removeItem('user');
       window.location.href = '/login';
       return Promise.reject(refreshError);

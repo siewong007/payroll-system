@@ -17,6 +17,11 @@ pub async fn list_audit_logs(
     let page = query.page.unwrap_or(1).clamp(1, 100_000);
     let per_page = query.per_page.unwrap_or(25).clamp(1, 100);
     let hide_privileged = crate::services::user_service::hides_privileged_users(&auth);
+    let priv_ids = if hide_privileged {
+        Some(crate::repositories::users::privileged_user_ids(&state.pool).await?)
+    } else {
+        None
+    };
     let (mut logs, total) =
         audit_service::list_audit_logs_scoped(&state.pool, company_id, &query, hide_privileged)
             .await?;
@@ -24,6 +29,8 @@ pub async fn list_audit_logs(
         &mut logs,
         !auth.is_payroll_privileged(),
         !auth.can(Permission::ManageEmployees),
+        !auth.can(Permission::ViewEmailLogs),
+        priv_ids.as_ref(),
     );
 
     Ok(Json(serde_json::json!({

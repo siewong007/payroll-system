@@ -4,6 +4,7 @@ import type {
   AuthenticationResponseJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from '@/lib/webauthn';
+import type { StepUpCredentials } from '@/types';
 
 export interface AttendanceMethodResponse {
   method: 'qr_code' | 'face_id';
@@ -100,8 +101,14 @@ export function getPlatformAttendanceMethod(): Promise<{ method: string; allow_c
   return api.get('/admin/platform/attendance-method').then(r => r.data);
 }
 
-export function setPlatformAttendanceMethod(method: string, allow_company_override: boolean) {
-  return api.put('/admin/platform/attendance-method', { method, allow_company_override }).then(r => r.data);
+export function setPlatformAttendanceMethod(
+  method: string,
+  allow_company_override: boolean,
+  stepUp: StepUpCredentials,
+) {
+  return api
+    .put('/admin/platform/attendance-method', { method, allow_company_override, ...stepUp })
+    .then((r) => r.data);
 }
 
 export function setCompanyAttendanceMethod(method: string | null) {

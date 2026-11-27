@@ -1,7 +1,7 @@
 use axum::{
     Json,
     body::Bytes,
-    extract::{Multipart, Query, State},
+    extract::{Multipart, State},
     http::header,
     response::IntoResponse,
 };
@@ -11,8 +11,9 @@ use uuid::Uuid;
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult, multipart_error, payload_too_large};
+use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
-use crate::models::backup::{CompanyBackup, ExportQuery, ImportResult};
+use crate::models::backup::{CompanyBackup, ExportBackupRequest, ImportResult};
 use crate::services::backup_service;
 
 /// Largest backup document this endpoint will accept. A backup carries every
@@ -48,14 +49,22 @@ fn require_backup_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
 pub async fn export_company(
     State(state): State<AppState>,
     auth: AuthUser,
-    Query(query): Query<ExportQuery>,
     audit_meta: AuditRequestMeta,
+    ValidatedJson(req): ValidatedJson<ExportBackupRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let (user_company_id, user_id) = require_backup_admin(&auth)?;
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        Some(&req.actor_password),
+        req.actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
 
     let company_id = if auth.has_any_role(&["super_admin"]) {
-        query.company_id.ok_or_else(|| {
-            AppError::BadRequest("company_id query parameter is required for super_admin".into())
+        req.company_id.ok_or_else(|| {
+            AppError::BadRequest("company_id is required for super_admin backup export".into())
         })?
     } else {
         user_company_id.unwrap()
@@ -122,6 +131,8 @@ pub async fn import_company(
     let mut file_data: Option<Bytes> = None;
     let mut requested_company_id: Option<Uuid> = None;
     let mut create_new = false;
+    let mut actor_password: Option<String> = None;
+    let mut actor_totp_code: Option<String> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -143,6 +154,16 @@ pub async fn import_company(
                 Uuid::parse_str(value.trim())
                     .map_err(|_| AppError::BadRequest("company_id must be a valid UUID".into()))?,
             );
+        } else if field.name() == Some("actor_password") {
+            actor_password =
+                Some(field.text().await.map_err(|e| {
+                    multipart_error(&e, "actor_password", BACKUP_REQUEST_MAX_BYTES)
+                })?);
+        } else if field.name() == Some("actor_totp_code") {
+            actor_totp_code =
+                Some(field.text().await.map_err(|e| {
+                    multipart_error(&e, "actor_totp_code", BACKUP_REQUEST_MAX_BYTES)
+                })?);
         } else if field.name() == Some("file") {
             let file_name = field.file_name().unwrap_or("upload").to_string();
             if !file_name.ends_with(".json") {
@@ -169,6 +190,15 @@ pub async fn import_company(
             file_data = Some(data);
         }
     }
+
+    crate::handlers::auth::require_step_up(
+        &state,
+        &auth,
+        actor_password.as_deref(),
+        actor_totp_code.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
 
     let data = file_data
         .ok_or_else(|| AppError::BadRequest("No file uploaded. Include a 'file' field.".into()))?;

@@ -10,11 +10,12 @@ payrollmy.com {
 
     header ?Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
-    # Anti-framing. The SPA's CSP is a <meta> tag, and browsers ignore
-    # `frame-ancestors` there, so it must come from a response header. The
-    # API's own `X-Frame-Options: DENY` only covers /api responses, not pages.
+    # Anti-framing + full CSP emitted in HTTP response headers so static HTML,
+    # offline.html, and SVGs under /branding/* inherit strong resource controls
+    # (`frame-ancestors` is ignored inside <meta> CSP tags).
     header X-Frame-Options "DENY"
-    header Content-Security-Policy "frame-ancestors 'none'"
+    header Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com https://static.cloudflareinsights.com 'sha256-KZprZ5wjRXV8Aj9Zl46B4kDwZsRP6Mv6mcxNgy1tMxc='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://api.payrollmy.com https://*.googleusercontent.com; font-src 'self' data:; connect-src 'self' https://api.payrollmy.com https://challenges.cloudflare.com https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    header Cross-Origin-Opener-Policy "same-origin"
     header X-Content-Type-Options "nosniff"
     header Referrer-Policy "strict-origin-when-cross-origin"
     header Permissions-Policy "camera=(self), geolocation=(self), microphone=()"
@@ -34,27 +35,40 @@ payrollmy.com {
     header @immutable Cache-Control "public, max-age=31536000, immutable"
 
     handle /assets/* {
-        file_server
+        file_server {
+            hide .* *.map
+        }
     }
 
     handle /sw.js {
-        file_server
+        file_server {
+            hide .* *.map
+        }
     }
 
     handle /manifest.webmanifest {
-        file_server
+        file_server {
+            hide .* *.map
+        }
     }
 
     handle /icons/* {
-        file_server
+        file_server {
+            hide .* *.map
+        }
     }
 
     handle /branding/* {
-        file_server
+        file_server {
+            hide .* *.map
+        }
     }
 
     handle {
+        header Cache-Control "no-cache, must-revalidate"
         try_files {path} /index.html
-        file_server
+        file_server {
+            hide .* *.map
+        }
     }
 }

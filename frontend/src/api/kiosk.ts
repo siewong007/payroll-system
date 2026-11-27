@@ -1,5 +1,6 @@
 import api from './client';
 import type { QrTokenResponse } from './attendance';
+import type { StepUpCredentials } from '@/types';
 
 export interface KioskCredential {
   id: string;
@@ -24,12 +25,15 @@ export function listKioskCredentials(): Promise<KioskCredential[]> {
   return api.get('/attendance/kiosks').then((r) => r.data);
 }
 
-export function createKioskCredential(label: string): Promise<CreateKioskCredentialResponse> {
-  return api.post('/attendance/kiosks', { label }).then((r) => r.data);
+export function createKioskCredential(
+  label: string,
+  stepUp: StepUpCredentials,
+): Promise<CreateKioskCredentialResponse> {
+  return api.post('/attendance/kiosks', { label, ...stepUp }).then((r) => r.data);
 }
 
-export function revokeKioskCredential(id: string): Promise<void> {
-  return api.delete(`/attendance/kiosks/${id}`).then(() => undefined);
+export function revokeKioskCredential(id: string, stepUp: StepUpCredentials): Promise<void> {
+  return api.delete(`/attendance/kiosks/${id}`, { data: stepUp }).then(() => undefined);
 }
 
 /**

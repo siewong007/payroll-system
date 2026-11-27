@@ -74,12 +74,24 @@ pub async fn claims_report(
 ) -> AppResult<Json<Vec<ClaimsReportRow>>> {
     let company_id = auth.authorize(Permission::ViewReports)?;
     let current_year = current_year();
-    let start = q
-        .start_date
-        .unwrap_or(NaiveDate::from_ymd_opt(current_year, 1, 1).unwrap());
-    let end = q
-        .end_date
-        .unwrap_or(NaiveDate::from_ymd_opt(current_year, 12, 31).unwrap());
+    let start = q.start_date.unwrap_or(
+        NaiveDate::from_ymd_opt(current_year, 1, 1)
+            .ok_or_else(|| crate::core::error::AppError::BadRequest("Invalid year".into()))?,
+    );
+    let end = q.end_date.unwrap_or(
+        NaiveDate::from_ymd_opt(current_year, 12, 31)
+            .ok_or_else(|| crate::core::error::AppError::BadRequest("Invalid year".into()))?,
+    );
+    if start > end {
+        return Err(crate::core::error::AppError::BadRequest(
+            "start_date must be on or before end_date".into(),
+        ));
+    }
+    if (end - start).num_days() > 366 {
+        return Err(crate::core::error::AppError::BadRequest(
+            "Claims report date range cannot exceed 366 days".into(),
+        ));
+    }
     let rows = report_service::claims_report(&state.pool, company_id, start, end).await?;
     Ok(Json(rows))
 }
@@ -116,7 +128,7 @@ pub async fn export_epf(
     let month = q.month.unwrap_or(default_month);
     let bytes = statutory_export_service::export_epf(&state.pool, company_id, year, month).await?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
         .header(
@@ -127,7 +139,7 @@ pub async fn export_epf(
             ),
         )
         .body(Body::from(bytes))
-        .unwrap())
+        .map_err(|e| crate::core::error::AppError::Internal(format!("Response error: {e}")))
 }
 
 pub async fn export_socso(
@@ -145,7 +157,7 @@ pub async fn export_socso(
     let bytes =
         statutory_export_service::export_socso(&state.pool, company_id, year, month).await?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
         .header(
@@ -156,7 +168,7 @@ pub async fn export_socso(
             ),
         )
         .body(Body::from(bytes))
-        .unwrap())
+        .map_err(|e| crate::core::error::AppError::Internal(format!("Response error: {e}")))
 }
 
 pub async fn export_eis(
@@ -173,7 +185,7 @@ pub async fn export_eis(
     let month = q.month.unwrap_or(default_month);
     let bytes = statutory_export_service::export_eis(&state.pool, company_id, year, month).await?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
         .header(
@@ -184,7 +196,7 @@ pub async fn export_eis(
             ),
         )
         .body(Body::from(bytes))
-        .unwrap())
+        .map_err(|e| crate::core::error::AppError::Internal(format!("Response error: {e}")))
 }
 
 pub async fn export_pcb(
@@ -202,7 +214,7 @@ pub async fn export_pcb(
     let bytes =
         statutory_export_service::export_pcb_cp39(&state.pool, company_id, year, month).await?;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
         .header(
@@ -213,7 +225,7 @@ pub async fn export_pcb(
             ),
         )
         .body(Body::from(bytes))
-        .unwrap())
+        .map_err(|e| crate::core::error::AppError::Internal(format!("Response error: {e}")))
 }
 
 // ─── EA Form ───
@@ -245,8 +257,6 @@ pub async fn get_ea_form(
 
     let data =
         ea_form_service::get_ea_form_data(&state.pool, company_id, employee_id, year).await?;
-    let bytes = ea_form_service::generate_ea_form_pdf(&data)?;
-
     let safe_emp: String = data
         .employee_number
         .chars()
@@ -258,6 +268,10 @@ pub async fn get_ea_form(
             }
         })
         .collect();
+    let bytes = crate::services::payslip_pdf_service::run_pdf_render(move || {
+        ea_form_service::generate_ea_form_pdf(&data)
+    })
+    .await?;
     let filename = format!(
         "EA_Form_{}_{}.pdf",
         year,

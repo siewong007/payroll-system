@@ -4,7 +4,6 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::passkey::ConsumedChallenge;
 
 pub async fn delete_expired(executor: impl Executor<'_, Database = Postgres>) -> AppResult<()> {
     sqlx::query!("DELETE FROM passkey_challenges WHERE expires_at < NOW()")
@@ -71,23 +70,6 @@ pub async fn consume_for_user(
     .fetch_optional(executor)
     .await?;
     Ok(state_json)
-}
-
-/// Consume an `authentication` challenge, returning the targeted user and state.
-pub async fn consume_authentication(
-    executor: impl Executor<'_, Database = Postgres>,
-    challenge_id: Uuid,
-) -> AppResult<Option<ConsumedChallenge>> {
-    let row = sqlx::query_as!(
-        ConsumedChallenge,
-        r#"DELETE FROM passkey_challenges
-        WHERE id = $1 AND challenge_type = 'authentication' AND expires_at > NOW()
-        RETURNING user_id, state_json"#,
-        challenge_id,
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(row)
 }
 
 /// Consume a `discoverable` challenge, returning its WebAuthn state.

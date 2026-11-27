@@ -4,7 +4,8 @@
 [advisories]
 version = 2
 ignore = [
-    # Pulled into Cargo.lock only via uncompiled sqlx-mysql backend; crate uses postgres only.
+    # Compiled via webauthn-rs 0.6.2 -> webauthn-rs-core -> crypto-glue 0.2.2 -> rsa 0.10.0-rc.19
+    # strictly for RSA public-key signature verification (no private-key operations reachable).
     "RUSTSEC-2023-0071",
     # Pulled into Cargo.lock only via uncompiled sqlx-sqlite backend; crate uses postgres only.
     "RUSTSEC-2026-0459",

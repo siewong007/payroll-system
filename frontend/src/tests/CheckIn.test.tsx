@@ -141,7 +141,9 @@ describe('classifyCheckInError', () => {
 });
 
 describe('parseScanToken', () => {
-  it('extracts the token from a kiosk URL', () => {
+  it('extracts the token from a fragment kiosk URL and legacy query URL', () => {
+    expect(parseScanToken('https://payroll.example/attendance/scan#token=abc123def4567890'))
+      .toEqual({ token: 'abc123def4567890' });
     expect(parseScanToken('https://payroll.example/attendance/scan?token=abc123def4567890'))
       .toEqual({ token: 'abc123def4567890' });
   });
@@ -319,7 +321,7 @@ describe('CheckInCard', () => {
     await waitFor(() => expect(camera.onScan).not.toBeNull());
     // The decode callback comes from the camera, outside React's batching.
     await act(async () => {
-      camera.onScan?.('https://payroll.example/attendance/scan?token=abc123def4567890');
+      camera.onScan?.('https://payroll.example/attendance/scan#token=abc123def4567890');
     });
 
     await waitFor(() => expect(checkInQr).toHaveBeenCalledWith('abc123def4567890', undefined, undefined));
