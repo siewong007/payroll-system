@@ -76,7 +76,7 @@ printpdf = { version = "0.12.9", default-features = false }
 
 # Excel
 calamine = "0.38"
-rust_xlsxwriter = "0.103"
+rust_xlsxwriter = "0.104"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # CSV
