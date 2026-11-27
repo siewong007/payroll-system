@@ -25,18 +25,35 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
     staleTime: Infinity,
   });
 
-  // Draw QR on canvas. `showQr` is a dependency because the canvas is
-  // unmounted while hidden: re-showing within the TTL returns the same cached
-  // token object, so keying on `token` alone left the fresh canvas unpainted
-  // until the token expired.
+  // Draw QR on canvas, clearing qrcode's fixed inline px dimensions so CSS width
+  // constraints hold even in narrow containers. `showQr` is a dependency because
+  // the canvas is unmounted while hidden: re-showing within the TTL returns the
+  // same cached token object, so keying on `token` alone left the fresh canvas
+  // unpainted until the token expired.
   useEffect(() => {
-    if (!showQr || !token || !canvasRef.current) return;
-    QRCode.toCanvas(canvasRef.current, token.scan_url, {
-      width: 240,
-      margin: 2,
-      errorCorrectionLevel: 'M',
-      color: { dark: '#111827', light: '#ffffff' },
-    });
+    const canvas = canvasRef.current;
+    if (!showQr || !token || !canvas) return;
+    let cancelled = false;
+    const clearInlineSize = () => {
+      canvas.style.removeProperty('width');
+      canvas.style.removeProperty('height');
+    };
+    void Promise.resolve(
+      QRCode.toCanvas(canvas, token.scan_url, {
+        width: 240,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#111827', light: '#ffffff' },
+      }),
+    )
+      .then(() => {
+        if (!cancelled) clearInlineSize();
+      })
+      .catch(() => {});
+    clearInlineSize();
+    return () => {
+      cancelled = true;
+    };
   }, [token, showQr]);
 
   // Countdown timer, measured from the TTL against the moment the response
@@ -148,7 +165,7 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
               ref={canvasRef}
               role="img"
               aria-label={t('attendance.qrPanel.title')}
-              className={`block w-full !h-auto max-w-[240px] aspect-square mx-auto rounded-xl transition-opacity ${
+              className={`block !w-full !h-auto max-w-[240px] aspect-square mx-auto rounded-xl transition-opacity ${
                 isExpired ? 'opacity-30' : 'opacity-100'
               }`}
             />

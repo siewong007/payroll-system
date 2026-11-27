@@ -3,10 +3,11 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const kioskMocks = vi.hoisted(() => ({ fetchKioskQr: vi.fn() }));
+const qrMocks = vi.hoisted(() => ({ toCanvas: vi.fn() }));
 
 vi.mock('@/api/kiosk', () => ({ fetchKioskQr: kioskMocks.fetchKioskQr }));
 // jsdom has no 2D canvas, and the QR bitmap is not what these tests are about.
-vi.mock('qrcode', () => ({ default: { toCanvas: vi.fn() } }));
+vi.mock('qrcode', () => ({ default: { toCanvas: qrMocks.toCanvas } }));
 
 import { AttendanceKioskPublic } from '@/pages/attendance/AttendanceKioskPublic';
 
@@ -35,6 +36,7 @@ beforeEach(() => {
   clock = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
   kioskMocks.fetchKioskQr.mockReset();
+  qrMocks.toCanvas.mockReset();
 });
 
 afterEach(() => {
@@ -135,5 +137,53 @@ describe('public kiosk QR lifecycle', () => {
     expect(replaceSpy).toHaveBeenCalledWith(null, '', '/kiosk');
     expect(window.location.pathname).toBe('/kiosk');
     window.history.replaceState(null, '', '/');
+  });
+
+  it('clears fixed inline px dimensions written by qrcode and sets dark body/theme chrome', async () => {
+    const prevBg = document.body.style.backgroundColor;
+    document.body.style.backgroundColor = 'rgb(243, 244, 246)';
+    const themeMeta = document.createElement('meta');
+    themeMeta.name = 'theme-color';
+    themeMeta.setAttribute('content', '#1B2E4B');
+    document.head.appendChild(themeMeta);
+
+    qrMocks.toCanvas.mockImplementation((canvas: HTMLCanvasElement) => {
+      canvas.width = 400;
+      canvas.height = 400;
+      canvas.style.width = '400px';
+      canvas.style.height = '400px';
+      return Promise.resolve();
+    });
+    kioskMocks.fetchKioskQr.mockResolvedValue({
+      token: 'tok-1',
+      scan_url: 'https://payroll.example/attendance/scan?token=tok-1',
+      expires_at: new Date().toISOString(),
+      ttl_seconds: 300,
+    });
+
+    try {
+      const { unmount } = renderKiosk();
+      await advance(0);
+
+      expect(qrMocks.toCanvas).toHaveBeenCalledTimes(1);
+      const canvas = screen.getByRole('img', { name: 'Attendance Kiosk' }) as HTMLCanvasElement;
+      expect(canvas.style.width).toBe('');
+      expect(canvas.style.height).toBe('');
+      expect(canvas).toHaveClass('!w-full', '!h-auto', 'max-w-full');
+
+      const main = screen.getByRole('main');
+      expect(main).toHaveClass('overflow-x-clip');
+      expect(main).not.toHaveClass('safe-area-top', 'safe-area-bottom');
+
+      expect(document.body.style.backgroundColor).toBe('rgb(3, 7, 18)');
+      expect(themeMeta.getAttribute('content')).toBe('#030712');
+
+      unmount();
+      expect(document.body.style.backgroundColor).toBe('rgb(243, 244, 246)');
+      expect(themeMeta.getAttribute('content')).toBe('#1B2E4B');
+    } finally {
+      document.head.removeChild(themeMeta);
+      document.body.style.backgroundColor = prevBg;
+    }
   });
 });

@@ -86,7 +86,7 @@ export function AttendanceKioskPublic() {
     }
   }, [status]);
 
-  // Block search engines and Referer leakage of the secret in the URL.
+  // Block search engines, Referer leakage, and light-mode body/status-bar chrome.
   useEffect(() => {
     const m1 = document.createElement('meta');
     m1.name = 'robots';
@@ -96,9 +96,22 @@ export function AttendanceKioskPublic() {
     m2.name = 'referrer';
     m2.content = 'no-referrer';
     document.head.appendChild(m2);
+    const prevBodyBg = document.body.style.backgroundColor;
+    document.body.style.backgroundColor = '#030712';
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    const prevThemeColor = themeColorMeta?.getAttribute('content') ?? null;
+    themeColorMeta?.setAttribute('content', '#030712');
     return () => {
       document.head.removeChild(m1);
       document.head.removeChild(m2);
+      document.body.style.backgroundColor = prevBodyBg;
+      if (themeColorMeta) {
+        if (prevThemeColor !== null) {
+          themeColorMeta.setAttribute('content', prevThemeColor);
+        } else {
+          themeColorMeta.removeAttribute('content');
+        }
+      }
     };
   }, []);
 
@@ -244,15 +257,32 @@ export function AttendanceKioskPublic() {
     };
   }, [kioskKey, scheduleMint]);
 
-  // Draw QR whenever scanUrl changes
+  // Draw QR whenever scanUrl changes, clearing qrcode's fixed inline px dimensions
+  // so responsive CSS scales the canvas cleanly inside narrow mobile viewports.
   useEffect(() => {
-    if (status.kind !== 'ok' || !canvasRef.current) return;
-    QRCode.toCanvas(canvasRef.current, status.scanUrl, {
-      width: 400,
-      margin: 2,
-      errorCorrectionLevel: 'M',
-      color: { dark: '#111827', light: '#ffffff' },
-    });
+    const canvas = canvasRef.current;
+    if (status.kind !== 'ok' || !canvas) return;
+    let cancelled = false;
+    const clearInlineSize = () => {
+      canvas.style.removeProperty('width');
+      canvas.style.removeProperty('height');
+    };
+    void Promise.resolve(
+      QRCode.toCanvas(canvas, status.scanUrl, {
+        width: 400,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#111827', light: '#ffffff' },
+      }),
+    )
+      .then(() => {
+        if (!cancelled) clearInlineSize();
+      })
+      .catch(() => {});
+    clearInlineSize();
+    return () => {
+      cancelled = true;
+    };
   }, [status]);
 
   // Countdown. Both terms come from the same monotonic local clock, so a device
@@ -276,10 +306,10 @@ export function AttendanceKioskPublic() {
   const isLow = timeLeft <= 10;
 
   return (
-    <main className="min-h-[100dvh] safe-area-top safe-area-bottom bg-gray-950 text-white flex flex-col items-center justify-center p-4 sm:p-6 select-none">
+    <main className="min-h-[100dvh] bg-gray-950 text-white flex flex-col items-center justify-center px-4 sm:px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pt-[calc(1.5rem+env(safe-area-inset-top))] sm:pb-[calc(1.5rem+env(safe-area-inset-bottom))] select-none overflow-x-clip">
       <div className="w-full max-w-md sm:max-w-lg md:max-w-xl lg:max-w-4xl bg-gray-900 border border-gray-800 rounded-3xl p-6 sm:p-8 shadow-2xl grid grid-cols-1 lg:grid-cols-2 lg:items-center gap-6 lg:gap-10">
         {/* Info / Clock column (left on landscape, split cleanly below QR on portrait) */}
-        <div className="flex flex-col items-center lg:items-start text-center lg:text-left gap-6">
+        <div className="min-w-0 flex flex-col items-center lg:items-start text-center lg:text-left gap-6">
           <div>
             <BrandLogo variant="lockup-dark" priority className="h-10 w-auto mx-auto lg:mx-0 mb-2 rounded-xl" />
             <h1 className="text-gray-300 text-sm font-medium uppercase tracking-wider">
@@ -300,7 +330,7 @@ export function AttendanceKioskPublic() {
         </div>
 
         {/* QR column */}
-        <div className="flex flex-col items-center gap-5 w-full">
+        <div className="min-w-0 flex flex-col items-center gap-5 w-full">
           <div className="relative w-full flex justify-center">
             {effectiveStatus.kind === 'loading' && (
               <div
@@ -349,7 +379,7 @@ export function AttendanceKioskPublic() {
                   ref={canvasRef}
                   role="img"
                   aria-label={t('attendance.kiosk.title')}
-                  className={`block w-full !h-auto aspect-square rounded-lg shadow-sm transition-opacity ${
+                  className={`block !w-full !h-auto max-w-full aspect-square rounded-lg transition-opacity ${
                     timeLeft === 0 ? 'opacity-30' : 'opacity-100'
                   }`}
                 />
