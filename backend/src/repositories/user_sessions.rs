@@ -133,3 +133,39 @@ pub async fn purge_stale(
     .await?;
     Ok(result.rows_affected())
 }
+
+/// True when `session_id` was created in the last 5 minutes AND the user has
+/// another session created within the last 30 days that is either older than
+/// 1 hour or has a different user-agent (indicates a brand-new login on a
+/// buddy's device shortly before checking in).
+pub async fn is_fresh_with_prior_session(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    session_id: Uuid,
+) -> AppResult<bool> {
+    let flagged = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+               SELECT 1
+               FROM user_sessions cur
+               WHERE cur.id = $1
+                 AND cur.user_id = $2
+                 AND cur.created_at > NOW() - INTERVAL '5 minutes'
+                 AND EXISTS (
+                     SELECT 1
+                     FROM user_sessions prev
+                     WHERE prev.user_id = $2
+                       AND prev.id <> cur.id
+                       AND prev.created_at > NOW() - INTERVAL '30 days'
+                       AND (
+                           prev.created_at < NOW() - INTERVAL '1 hour'
+                           OR COALESCE(prev.user_agent, '') <> COALESCE(cur.user_agent, '')
+                       )
+                 )
+           ) AS "flagged!""#,
+        session_id,
+        user_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(flagged)
+}

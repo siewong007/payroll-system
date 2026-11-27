@@ -219,7 +219,7 @@ export function UserGroups() {
                 group.permissions.map((key) => (
                   <span
                     key={key}
-                    className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"
+                    className="text-xs px-2 py-0.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent-1)] border border-[var(--border)]"
                   >
                     {labelFor.get(key) ?? key}
                   </span>
@@ -515,7 +515,7 @@ function GroupEditor({
                       type="button"
                       onClick={() => selectGroup(permissions)}
                       aria-label={`${t('common.selectAll')} — ${localizedGroup}`}
-                      className="min-h-8 px-2 py-1 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-500/15 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
+                      className="min-h-8 px-2 py-1 text-xs font-medium text-[var(--accent-1)] hover:bg-[var(--accent-soft)] rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
                     >
                       {t('common.selectAll')}
                     </button>

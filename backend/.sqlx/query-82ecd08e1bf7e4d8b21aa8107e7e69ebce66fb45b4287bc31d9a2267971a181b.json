@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_device_challenges WHERE expires_at < NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "82ecd08e1bf7e4d8b21aa8107e7e69ebce66fb45b4287bc31d9a2267971a181b"
+}

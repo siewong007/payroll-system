@@ -4,12 +4,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   AlertTriangle,
+  Camera,
   Loader2,
   LogIn,
   LogOut,
   MapPin,
   MoreVertical,
   Pencil,
+  ShieldAlert,
+  Smartphone,
   Timer,
   WifiOff,
   X,
@@ -20,6 +23,7 @@ import {
   type AttendanceRecordWithEmployee,
 } from '@/api/attendance';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { zonedDateKey } from '@/lib/attendance';
@@ -411,11 +415,13 @@ export function RecordCard({
   record: r,
   canEdit,
   onEdit,
+  onViewPhotos,
   timeZone = 'Asia/Kuala_Lumpur',
 }: {
   record: AttendanceRecordWithEmployee;
   canEdit: boolean;
   onEdit: () => void;
+  onViewPhotos?: () => void;
   timeZone?: string;
 }) {
   const { t } = useTranslation();
@@ -427,6 +433,9 @@ export function RecordCard({
     !isAbsentPlaceholder &&
     Boolean(r.check_out_at) &&
     zonedDateKey(r.check_out_at as string, timeZone) > zonedDateKey(r.check_in_at, timeZone);
+  const hasPhotoInfo = Boolean(
+    r.check_in_photo_url || r.check_out_photo_url || r.check_in_photo_purged_at || r.check_out_photo_purged_at,
+  );
 
   return (
     <div className="p-4">
@@ -461,6 +470,15 @@ export function RecordCard({
               <span>{t('attendance.records.offsiteNetwork')}</span>
             </span>
           )}
+          {r.anomaly_flags?.map((flag) => (
+            <span
+              key={flag}
+              className="inline-flex items-center gap-1 rounded-full bg-red-50 dark:bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-300"
+            >
+              <ShieldAlert className="w-3 h-3" aria-hidden="true" />
+              <span>{t(`attendance.anomalies.flags.${flag}`, { defaultValue: flag })}</span>
+            </span>
+          ))}
           {canEdit && (
             <button
               type="button"
@@ -537,13 +555,87 @@ export function RecordCard({
             href={`https://maps.google.com/?q=${r.checkout_latitude},${r.checkout_longitude}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="min-h-9 inline-flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 hover:underline"
+            className="min-h-9 inline-flex items-center gap-1 text-[var(--accent-1)] hover:underline"
           >
             <MapPin className="w-3.5 h-3.5" aria-hidden="true" />
             {t('attendance.records.checkOutLocation')}
           </a>
         )}
+        {r.check_in_device_label && (
+          <span className="inline-flex items-center gap-1 text-gray-500 dark:text-slate-400">
+            <Smartphone className="w-3 h-3" aria-hidden="true" />
+            {r.check_in_device_label}
+          </span>
+        )}
+        {hasPhotoInfo && onViewPhotos && (
+          <button
+            type="button"
+            onClick={onViewPhotos}
+            className="inline-flex items-center gap-1 text-[var(--accent-1)] hover:underline font-medium"
+          >
+            <Camera className="w-3.5 h-3.5" aria-hidden="true" />
+            {t('attendance.photo.viewPhotos')}
+          </button>
+        )}
       </div>
     </div>
+  );
+}
+
+export function AttendancePhotoModal({
+  record,
+  onClose,
+}: {
+  record: AttendanceRecordWithEmployee;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`${t('attendance.photo.modalTitle')} — ${record.full_name}`}
+      maxWidth="max-w-lg"
+      footer={
+        <div className="flex justify-end">
+          <button type="button" onClick={onClose} className="btn-primary">
+            {t('common.close')}
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-5">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">
+            {t('attendance.records.checkIn')}
+          </p>
+          {record.check_in_photo_url ? (
+            <AttachmentPreview url={record.check_in_photo_url} name={t('attendance.photo.checkInTitle')} />
+          ) : record.check_in_photo_purged_at ? (
+            <p className="text-sm text-gray-500 dark:text-slate-400">
+              {t('attendance.photo.purgedNotice')}
+            </p>
+          ) : (
+            <p className="text-sm text-gray-400 dark:text-slate-500">—</p>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">
+            {t('attendance.records.checkOut')}
+          </p>
+          {record.check_out_photo_url ? (
+            <AttachmentPreview url={record.check_out_photo_url} name={t('attendance.photo.checkOutTitle')} />
+          ) : record.check_out_photo_purged_at ? (
+            <p className="text-sm text-gray-500 dark:text-slate-400">
+              {t('attendance.photo.purgedNotice')}
+            </p>
+          ) : (
+            <p className="text-sm text-gray-400 dark:text-slate-500">—</p>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }

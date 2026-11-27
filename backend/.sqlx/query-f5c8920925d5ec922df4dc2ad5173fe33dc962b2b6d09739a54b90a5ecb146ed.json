@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH expired_in AS (\n               SELECT ar.id, substring(ar.check_in_photo_url FROM 14) AS stored_name\n               FROM attendance_records ar\n               JOIN companies c ON c.id = ar.company_id\n               WHERE ar.check_in_photo_url IS NOT NULL\n                 AND ar.check_in_at < NOW() - make_interval(days => c.attendance_photo_retention_days)\n           ),\n           expired_out AS (\n               SELECT ar.id, substring(ar.check_out_photo_url FROM 14) AS stored_name\n               FROM attendance_records ar\n               JOIN companies c ON c.id = ar.company_id\n               WHERE ar.check_out_photo_url IS NOT NULL\n                 AND COALESCE(ar.check_out_at, ar.check_in_at) < NOW() - make_interval(days => c.attendance_photo_retention_days)\n           ),\n           updated AS (\n               UPDATE attendance_records ar\n               SET check_in_photo_url = CASE\n                       WHEN ar.id IN (SELECT id FROM expired_in) THEN NULL\n                       ELSE ar.check_in_photo_url\n                   END,\n                   check_in_photo_purged_at = CASE\n                       WHEN ar.id IN (SELECT id FROM expired_in) THEN NOW()\n                       ELSE ar.check_in_photo_purged_at\n                   END,\n                   check_out_photo_url = CASE\n                       WHEN ar.id IN (SELECT id FROM expired_out) THEN NULL\n                       ELSE ar.check_out_photo_url\n                   END,\n                   check_out_photo_purged_at = CASE\n                       WHEN ar.id IN (SELECT id FROM expired_out) THEN NOW()\n                       ELSE ar.check_out_photo_purged_at\n                   END,\n                   updated_at = NOW()\n               WHERE ar.id IN (SELECT id FROM expired_in UNION SELECT id FROM expired_out)\n               RETURNING ar.id\n           ),\n           to_remove AS (\n               SELECT stored_name FROM expired_in WHERE stored_name IS NOT NULL\n               UNION\n               SELECT stored_name FROM expired_out WHERE stored_name IS NOT NULL\n           ),\n           deleted_uploads AS (\n               DELETE FROM uploaded_files uf\n               WHERE uf.stored_name IN (SELECT stored_name FROM to_remove)\n               RETURNING uf.stored_name\n           )\n           SELECT stored_name AS \"stored_name!\"\n           FROM to_remove\n           WHERE EXISTS (SELECT 1 FROM updated LIMIT 1)\n              OR EXISTS (SELECT 1 FROM deleted_uploads LIMIT 1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stored_name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f5c8920925d5ec922df4dc2ad5173fe33dc962b2b6d09739a54b90a5ecb146ed"
+}

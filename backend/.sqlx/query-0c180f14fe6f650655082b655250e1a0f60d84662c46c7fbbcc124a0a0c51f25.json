@@ -1,0 +1,185 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE attendance_personal_qr_tokens\n           SET used = TRUE\n           WHERE token_hash = $1\n             AND company_id = $2\n             AND used = FALSE\n             AND expires_at >= NOW()\n           RETURNING id, company_id, employee_id, user_id, token_hash, action,\n                     device_id, cookie_device_id, session_id, passkey_id, user_agent,\n                     used, expires_at, created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "token_hash",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "token_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "action",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "device_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "cookie_device_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "cookie_device_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "session_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "passkey_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "passkey_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "user_agent",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "user_agent"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "used",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "used"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_personal_qr_tokens",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0c180f14fe6f650655082b655250e1a0f60d84662c46c7fbbcc124a0a0c51f25"
+}

@@ -248,6 +248,57 @@ pub async fn set_attendance_network_mode(
     Ok(())
 }
 
+pub async fn get_attendance_security_settings(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Option<crate::models::attendance::AttendanceSecuritySettings>> {
+    let row = sqlx::query_as!(
+        crate::models::attendance::AttendanceSecuritySettings,
+        r#"SELECT attendance_device_mode AS device_mode,
+                  attendance_device_auto_approve_first AS device_auto_approve_first,
+                  attendance_photo_mode AS photo_mode,
+                  attendance_photo_retention_days AS photo_retention_days
+           FROM companies
+           WHERE id = $1"#,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
+pub async fn update_attendance_security_settings(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    device_mode: &str,
+    device_auto_approve_first: bool,
+    photo_mode: &str,
+    photo_retention_days: i32,
+) -> AppResult<crate::models::attendance::AttendanceSecuritySettings> {
+    let row = sqlx::query_as!(
+        crate::models::attendance::AttendanceSecuritySettings,
+        r#"UPDATE companies
+           SET attendance_device_mode = $2,
+               attendance_device_auto_approve_first = $3,
+               attendance_photo_mode = $4,
+               attendance_photo_retention_days = $5,
+               updated_at = NOW()
+           WHERE id = $1
+           RETURNING attendance_device_mode AS device_mode,
+                     attendance_device_auto_approve_first AS device_auto_approve_first,
+                     attendance_photo_mode AS photo_mode,
+                     attendance_photo_retention_days AS photo_retention_days"#,
+        company_id,
+        device_mode,
+        device_auto_approve_first,
+        photo_mode,
+        photo_retention_days,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(row)
+}
+
 /// Wipe every company-scoped row *except* the `companies` row itself and the
 /// user linkage, children before parents.
 ///

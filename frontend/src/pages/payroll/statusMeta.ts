@@ -7,13 +7,13 @@ import type { PayrollDiagnostic } from '@/types';
 /// page and the overview. Lives outside the page modules because lazyNamed()
 /// requires every export of a lazily imported module to be a component.
 export const PAYROLL_STATUS_STYLES: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300',
-  processing: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-950/50 dark:text-yellow-300',
-  processed: 'bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-slate-100',
-  pending_approval: 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300',
-  approved: 'bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300',
-  paid: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
-  cancelled: 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300',
+  draft: 'bg-zinc-100 text-zinc-700 border border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700',
+  processing: 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/25',
+  processed: 'bg-zinc-100 text-zinc-900 border border-zinc-300 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-600',
+  pending_approval: 'bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-500/12 dark:text-blue-300 dark:border-blue-500/25',
+  approved: 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/12 dark:text-emerald-300 dark:border-emerald-500/25',
+  paid: 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/12 dark:text-emerald-300 dark:border-emerald-500/25',
+  cancelled: 'bg-red-50 text-red-800 border border-red-200 dark:bg-red-500/12 dark:text-red-300 dark:border-red-500/25',
 };
 
 export const PAYROLL_STATUSES = [

@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router';
-import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles, LayoutDashboard, Search, Download, Smartphone, Info } from 'lucide-react';
+import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, LayoutDashboard, Search, Download, Smartphone, Info } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { usePwa } from '@/context/PwaContext';
 import { canUseAdminConsole } from '@/lib/roles';
@@ -11,6 +11,7 @@ import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
 import { PwaInstallBanner } from '@/components/pwa/PwaInstallBanner';
 import { openCommandPalette } from '@/lib/commandPalette';
+import { prefetchRoute } from '@/lib/routePrefetch';
 import { PageTransition } from '@/components/ui/PageTransition';
 import { useTranslation } from 'react-i18next';
 
@@ -70,7 +71,8 @@ export function PortalLayout() {
   const { data: notifCount } = useQuery({
     queryKey: ['notification-count'],
     queryFn: getNotificationCount,
-    refetchInterval: 30_000,
+    staleTime: 25_000,
+    refetchInterval: 60_000,
     enabled: isAuthenticated && Boolean(user?.company_id) && !user?.must_change_password,
   });
 
@@ -141,22 +143,19 @@ export function PortalLayout() {
     <div className="theme-portal relative isolate min-h-screen bg-[var(--background)]">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-teal-600 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-[var(--primary-bg)] focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-[var(--primary-fg)] focus:shadow-md"
       >
         {t('a11y.skipToContent')}
       </a>
-      {/* Ambient aurora behind the portal */}
-      <div aria-hidden className="aurora-portal pointer-events-none fixed inset-0 -z-10" />
 
       {/* Top Navigation Bar */}
-      <header className="glass-nav safe-area-top sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 h-14 md:h-16 px-4 md:px-6">
+      <header className="safe-area-top sticky top-0 z-50 bg-[var(--card)] border-b border-[var(--border)]">
+        <div className="max-w-[1360px] mx-auto flex items-center justify-between gap-2 h-13 px-4 md:px-6">
           {/* Left: Logo + nav */}
-          <div className="flex items-center gap-3 lg:gap-5 xl:gap-6 min-w-0">
+          <div className="flex items-center gap-3 lg:gap-5 min-w-0">
             <div className="flex items-center gap-2 shrink-0">
-              <BrandLogo variant="lockup-dark" priority className="h-7 sm:h-8 w-auto shrink-0" />
-              <span className="hidden lg:inline-flex items-center gap-1 bg-gradient-to-r from-teal-500 to-emerald-500 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full shadow-[0_2px_10px_-2px_var(--glow)]">
-                <Sparkles className="w-2.5 h-2.5" />
+              <BrandLogo variant="lockup-auto" priority className="h-6 sm:h-7 w-auto shrink-0" />
+              <span className="hidden lg:inline-flex items-center rounded border border-[var(--border)] bg-[var(--surface-subtle)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-foreground)]">
                 {t('nav.portalBadge')}
               </span>
             </div>
@@ -169,18 +168,17 @@ export function PortalLayout() {
                   <Link
                     key={item.nameKey}
                     to={item.href}
+                    onMouseEnter={() => prefetchRoute(item.href)}
+                    onFocus={() => prefetchRoute(item.href)}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`relative flex items-center gap-1.5 px-2.5 py-2 text-[13px] rounded-xl transition-all-fast ${
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md transition-all-fast border ${
                       isActive
-                        ? 'text-teal-900 dark:text-teal-200 font-semibold'
-                        : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800/70'
+                        ? 'bg-[var(--surface-subtle)] border-[var(--border)] text-[var(--foreground)] font-medium'
+                        : 'border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)]/70'
                     }`}
                   >
-                    {isActive && (
-                      <span className="absolute inset-0 rounded-xl bg-gradient-to-r from-teal-500/15 to-emerald-500/15 ring-1 ring-teal-500/25 shadow-[0_4px_14px_-6px_var(--glow)]" />
-                    )}
-                    <item.icon className={`relative w-4 h-4 shrink-0 ${isActive ? 'text-teal-600 dark:text-teal-300' : ''}`} />
-                    <span className="relative whitespace-nowrap">{t(item.nameKey)}</span>
+                    <item.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-[var(--accent-1)]' : 'text-[var(--subtle-foreground)]'}`} />
+                    <span className="whitespace-nowrap">{t(item.nameKey)}</span>
                   </Link>
                 );
               })}
@@ -194,18 +192,17 @@ export function PortalLayout() {
                   <Link
                     key={item.nameKey}
                     to={item.href}
+                    onMouseEnter={() => prefetchRoute(item.href)}
+                    onFocus={() => prefetchRoute(item.href)}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`relative flex items-center gap-1.5 px-2.5 py-2 text-[13px] rounded-xl transition-all-fast ${
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md transition-all-fast border ${
                       isActive
-                        ? 'text-teal-900 dark:text-teal-200 font-semibold'
-                        : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800/70'
+                        ? 'bg-[var(--surface-subtle)] border-[var(--border)] text-[var(--foreground)] font-medium'
+                        : 'border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)]/70'
                     }`}
                   >
-                    {isActive && (
-                      <span className="absolute inset-0 rounded-xl bg-gradient-to-r from-teal-500/15 to-emerald-500/15 ring-1 ring-teal-500/25 shadow-[0_4px_14px_-6px_var(--glow)]" />
-                    )}
-                    <item.icon className={`relative w-4 h-4 shrink-0 ${isActive ? 'text-teal-600 dark:text-teal-300' : ''}`} />
-                    <span className="relative whitespace-nowrap">{t(item.nameKey)}</span>
+                    <item.icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-[var(--accent-1)]' : 'text-[var(--subtle-foreground)]'}`} />
+                    <span className="whitespace-nowrap">{t(item.nameKey)}</span>
                   </Link>
                 );
               })}
@@ -216,22 +213,19 @@ export function PortalLayout() {
                   onClick={() => setShowDesktopMoreMenu((prev) => !prev)}
                   aria-expanded={showDesktopMoreMenu}
                   aria-haspopup="menu"
-                  className={`relative flex items-center gap-1 px-2.5 py-2 text-[13px] rounded-xl transition-all-fast ${
+                  className={`flex items-center gap-1 px-2.5 py-1.5 text-[13px] rounded-md transition-all-fast border ${
                     isCompactMoreActive
-                      ? 'text-teal-900 dark:text-teal-200 font-semibold'
-                      : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800/70'
+                      ? 'bg-[var(--surface-subtle)] border-[var(--border)] text-[var(--foreground)] font-medium'
+                      : 'border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)]/70'
                   }`}
                 >
-                  {isCompactMoreActive && (
-                    <span className="absolute inset-0 rounded-xl bg-gradient-to-r from-teal-500/15 to-emerald-500/15 ring-1 ring-teal-500/25 shadow-[0_4px_14px_-6px_var(--glow)]" />
-                  )}
-                  <MoreHorizontal className="relative w-4 h-4" />
-                  <span className="relative whitespace-nowrap">{t('nav.portal.more')}</span>
+                  <MoreHorizontal className="w-4 h-4" />
+                  <span className="whitespace-nowrap">{t('nav.portal.more')}</span>
                 </button>
                 {showDesktopMoreMenu && (
                   <div
                     role="menu"
-                    className="animate-drop-in glass-menu absolute left-0 mt-2 w-52 rounded-2xl z-30 py-1 overflow-hidden"
+                    className="animate-drop-in absolute left-0 mt-1.5 w-48 rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-md z-30 py-1 overflow-hidden"
                   >
                     {compactDesktopMoreNav.map((item) => {
                       const active = isRouteActive(item.href);
@@ -241,15 +235,16 @@ export function PortalLayout() {
                           to={item.href}
                           role="menuitem"
                           aria-current={active ? 'page' : undefined}
+                          onMouseEnter={() => prefetchRoute(item.href)}
                           onClick={() => setShowDesktopMoreMenu(false)}
-                          className={`flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
+                          className={`flex items-center justify-between px-3.5 py-2 text-[13px] transition-colors ${
                             active
-                              ? 'text-teal-700 dark:text-teal-300 font-semibold bg-teal-50/70 dark:bg-teal-500/15'
-                              : 'text-gray-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-slate-800'
+                              ? 'text-[var(--foreground)] font-medium bg-[var(--surface-subtle)]'
+                              : 'text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)]'
                           }`}
                         >
                           <span className="flex items-center gap-2.5">
-                            <item.icon className="w-4 h-4" />
+                            <item.icon className={`w-4 h-4 ${active ? 'text-[var(--accent-1)]' : ''}`} />
                             <span>{t(item.nameKey)}</span>
                           </span>
                         </Link>
@@ -267,7 +262,7 @@ export function PortalLayout() {
               type="button"
               onClick={openCommandPalette}
               aria-label={t('nav.quickSearch')}
-              className="min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-xl transition-all-fast"
+              className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 md:h-8 md:w-8 inline-flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)] rounded-md transition-all-fast"
             >
               <Search className="w-4 h-4" />
             </button>
@@ -275,15 +270,15 @@ export function PortalLayout() {
               to="/portal/notifications"
               aria-label={t('nav.portal.notifications')}
               title={t('nav.portal.notifications')}
-              className={`relative min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl transition-all-fast ${
+              className={`relative min-h-11 min-w-11 md:min-h-8 md:min-w-8 md:h-8 md:w-8 inline-flex items-center justify-center rounded-md transition-all-fast ${
                 isRouteActive('/portal/notifications')
-                  ? 'bg-teal-500/15 text-teal-700 dark:text-teal-200 ring-1 ring-teal-500/25'
-                  : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800'
+                  ? 'bg-[var(--surface-subtle)] text-[var(--foreground)] border border-[var(--border)]'
+                  : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)]'
               }`}
             >
               <Bell className="w-5 h-5 md:w-4 md:h-4" />
               {hasUnread && (
-                <span className="absolute top-1.5 right-1.5 min-w-[16px] h-[16px] px-1 text-[9px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none shadow-[0_0_8px_rgba(239,68,68,0.6)]">
+                <span className="absolute top-1.5 right-1.5 md:top-0.5 md:right-0.5 min-w-[15px] h-[15px] px-1 text-[9px] font-semibold bg-red-600 text-white rounded-full flex items-center justify-center leading-none tabular-nums">
                   {notifCount!.unread > 99 ? '99+' : notifCount!.unread}
                 </span>
               )}
@@ -295,90 +290,83 @@ export function PortalLayout() {
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 aria-expanded={showUserMenu}
                 aria-haspopup="menu"
-                className="min-h-11 flex items-center gap-2 text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-xl px-1.5 transition-all-fast"
+                className="min-h-11 md:min-h-8 flex items-center gap-2 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-md px-1.5 transition-all-fast"
               >
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-500 to-emerald-500 ring-2 ring-white/80 dark:ring-slate-800 shadow-[0_4px_14px_-4px_var(--glow)] flex items-center justify-center text-xs font-bold text-white shrink-0">
+                <div className="w-7 h-7 rounded-md bg-[var(--accent-1)] text-[var(--accent-fg)] flex items-center justify-center text-xs font-semibold shrink-0">
                   {user?.full_name?.[0] || 'U'}
                 </div>
-                <span className="sr-only lg:not-sr-only font-medium max-w-[130px] truncate">{user?.full_name || t('common.user')}</span>
+                <span className="sr-only lg:not-sr-only font-medium text-[var(--foreground)] max-w-[130px] truncate">{user?.full_name || t('common.user')}</span>
                 <ChevronDown
-                  className={`hidden lg:block w-3.5 h-3.5 text-gray-400 dark:text-slate-400 transition-transform duration-200 shrink-0 ${showUserMenu ? 'rotate-180' : ''}`}
+                  className={`hidden lg:block w-3.5 h-3.5 text-[var(--subtle-foreground)] transition-transform duration-150 shrink-0 ${showUserMenu ? 'rotate-180' : ''}`}
                 />
               </button>
 
               {showUserMenu && (
-                <div className="animate-drop-in glass-menu absolute right-0 mt-2 w-64 rounded-2xl z-20 py-1 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-200/60 dark:border-slate-800">
-                      <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate">{user?.full_name}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 truncate">{user?.email}</p>
-                    </div>
-                    {/* Anyone who is not a sole-role employee lives in the admin
-                        shell — `AppLayout` only redirects the sole-role case — so
-                        they are here by choice and need a way back. Until now that
-                        was the browser's back button or a hand-typed URL.
-                        `/` rather than a fixed page: `HomeRedirect` picks the
-                        landing screen their roles actually allow, which is
-                        `/companies` for a super_admin and `/company` otherwise. */}
-                    {canUseAdminConsole(user) && (
-                      <Link
-                        to="/"
-                        onClick={() => setShowUserMenu(false)}
-                        className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 dark:text-slate-300 border-b border-gray-200/60 dark:border-slate-800 hover:bg-white/70 dark:hover:bg-slate-800 hover:text-teal-700 dark:hover:text-teal-300 transition-all-fast"
-                      >
-                        <LayoutDashboard className="w-4 h-4" /> {t('nav.adminConsole')}
-                      </Link>
-                    )}
-                    <div className="px-4 py-2.5 space-y-2 border-b border-gray-200/60 dark:border-slate-800">
-                      <AppearanceSwitcher />
-                      <LanguageSwitcher />
-                    </div>
-                    {(canShowInstallGuide ||
-                      notificationStatus === 'default' ||
-                      notificationStatus === 'ios-install-required') && (
-                      <div className="border-b border-gray-200/60 dark:border-slate-800">
-                        {canShowInstallGuide && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowUserMenu(false);
-                              void triggerInstall();
-                            }}
-                            className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-gray-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-800 hover:text-teal-700 dark:hover:text-teal-300 transition-all-fast"
-                          >
-                            {canPromptInstall ? (
-                              <Download className="w-4 h-4" aria-hidden="true" />
-                            ) : (
-                              <Smartphone className="w-4 h-4" aria-hidden="true" />
-                            )}
-                            {canPromptInstall
-                              ? t('pwa.actions.installApp')
-                              : t('pwa.actions.addToHomeScreen')}
-                          </button>
-                        )}
-                        {(notificationStatus === 'default' ||
-                          notificationStatus === 'ios-install-required') && (
-                          <button
-                            type="button"
-                            disabled={notificationBusy}
-                            onClick={() => {
-                              setShowUserMenu(false);
-                              void enableNotifications();
-                            }}
-                            className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-gray-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-800 hover:text-teal-700 dark:hover:text-teal-300 transition-all-fast disabled:opacity-50"
-                          >
-                            <Bell className="w-4 h-4" aria-hidden="true" />
-                            {t('pwa.actions.allowNotifications')}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void logout()}
-                      className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-800 hover:text-red-600 dark:hover:text-red-400 transition-all-fast"
+                <div className="animate-drop-in absolute right-0 mt-1.5 w-64 rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-md z-20 py-1 overflow-hidden">
+                  <div className="px-3.5 py-2.5 border-b border-[var(--border)]">
+                    <p className="text-[13px] font-semibold text-[var(--foreground)] truncate">{user?.full_name}</p>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5 truncate">{user?.email}</p>
+                  </div>
+                  {canUseAdminConsole(user) && (
+                    <Link
+                      to="/"
+                      onClick={() => setShowUserMenu(false)}
+                      className="flex items-center gap-2.5 w-full px-3.5 py-2.5 text-[13px] text-[var(--muted-foreground)] border-b border-[var(--border)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)] transition-all-fast"
                     >
-                      <LogOut className="w-4 h-4" /> {t('nav.signOut')}
-                    </button>
+                      <LayoutDashboard className="w-4 h-4" /> {t('nav.adminConsole')}
+                    </Link>
+                  )}
+                  <div className="px-3.5 py-2.5 space-y-2 border-b border-[var(--border)]">
+                    <AppearanceSwitcher />
+                    <LanguageSwitcher />
+                  </div>
+                  {(canShowInstallGuide ||
+                    notificationStatus === 'default' ||
+                    notificationStatus === 'ios-install-required') && (
+                    <div className="border-b border-[var(--border)] py-1">
+                      {canShowInstallGuide && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowUserMenu(false);
+                            void triggerInstall();
+                          }}
+                          className="flex items-center gap-2.5 w-full px-3.5 py-2 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)] transition-all-fast"
+                        >
+                          {canPromptInstall ? (
+                            <Download className="w-4 h-4" aria-hidden="true" />
+                          ) : (
+                            <Smartphone className="w-4 h-4" aria-hidden="true" />
+                          )}
+                          {canPromptInstall
+                            ? t('pwa.actions.installApp')
+                            : t('pwa.actions.addToHomeScreen')}
+                        </button>
+                      )}
+                      {(notificationStatus === 'default' ||
+                        notificationStatus === 'ios-install-required') && (
+                        <button
+                          type="button"
+                          disabled={notificationBusy}
+                          onClick={() => {
+                            setShowUserMenu(false);
+                            void enableNotifications();
+                          }}
+                          className="flex items-center gap-2.5 w-full px-3.5 py-2 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)] transition-all-fast disabled:opacity-50"
+                        >
+                          <Bell className="w-4 h-4" aria-hidden="true" />
+                          {t('pwa.actions.allowNotifications')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void logout()}
+                    className="flex items-center gap-2.5 w-full px-3.5 py-2.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-red-600 dark:hover:text-red-400 transition-all-fast"
+                  >
+                    <LogOut className="w-4 h-4" /> {t('nav.signOut')}
+                  </button>
                 </div>
               )}
             </div>
@@ -387,30 +375,27 @@ export function PortalLayout() {
       </header>
 
       {/* Content */}
-      {/* The bottom bar is ~56px plus env(safe-area-inset-bottom) (~34px on a
-          phone with a home indicator), so a flat pb-20 leaves the last row of
-          content under it on exactly the devices employees check in from. */}
       <main
         id="main-content"
         tabIndex={-1}
-        className="max-w-7xl mx-auto px-4 py-4 md:px-6 md:py-8 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8 focus:outline-none"
+        className="max-w-[1360px] mx-auto px-4 py-4 md:px-6 md:py-5 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-6 focus:outline-none"
       >
         <PwaInstallBanner />
         {showNoProfileBanner && (
-          <div className="mb-4 card !p-4 border-amber-200/80 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
-              <div className="text-sm">
-                <p className="font-semibold text-amber-900 dark:text-amber-200">
+          <div className="mb-4 surface-panel p-3.5 border-amber-300 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+              <div className="text-[13px]">
+                <p className="font-medium text-amber-900 dark:text-amber-200">
                   {t('nav.portal.noProfileTitle')}
                 </p>
-                <p className="text-xs text-amber-800/90 dark:text-amber-300/90 mt-0.5">
+                <p className="text-xs text-amber-800 dark:text-amber-300/90 mt-0.5">
                   {t('nav.portal.noProfileBody')}
                 </p>
               </div>
             </div>
             {canUseAdminConsole(user) && (
-              <Link to="/" className="btn-secondary !min-h-10 text-xs shrink-0">
+              <Link to="/" className="btn-secondary !min-h-9 text-xs shrink-0">
                 <LayoutDashboard className="w-3.5 h-3.5" aria-hidden="true" />
                 {t('nav.portal.backToConsole')}
               </Link>
@@ -420,16 +405,16 @@ export function PortalLayout() {
         <PageTransition>
           <Outlet />
         </PageTransition>
-        <footer className="no-print mt-10 pt-4 border-t border-slate-200/60 dark:border-slate-800/70 flex flex-wrap items-center justify-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-          <Link to="/terms" className="hover:text-teal-600 dark:hover:text-teal-300 transition-colors">
+        <footer className="no-print mt-8 pt-4 border-t border-[var(--border)] flex flex-wrap items-center justify-center gap-3 text-xs text-[var(--subtle-foreground)]">
+          <Link to="/terms" className="hover:text-[var(--foreground)] transition-colors">
             {t('legal.links.terms')}
           </Link>
-          <span>·</span>
-          <Link to="/privacy" className="hover:text-teal-600 dark:hover:text-teal-300 transition-colors">
+          <span aria-hidden="true">·</span>
+          <Link to="/privacy" className="hover:text-[var(--foreground)] transition-colors">
             {t('legal.links.privacy')}
           </Link>
-          <span>·</span>
-          <Link to="/compliance" className="hover:text-teal-600 dark:hover:text-teal-300 transition-colors">
+          <span aria-hidden="true">·</span>
+          <Link to="/compliance" className="hover:text-[var(--foreground)] transition-colors">
             {t('legal.links.compliance')}
           </Link>
         </footer>
@@ -438,7 +423,7 @@ export function PortalLayout() {
       {/* Mobile Bottom Tab Bar */}
       <nav
         aria-label={t('nav.portalBadge')}
-        className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-bottom bg-white/80 dark:bg-slate-900/85 backdrop-blur-xl border-t border-white/60 dark:border-slate-800 shadow-[0_-4px_24px_-12px_var(--glow)]"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-bottom bg-[var(--card)] border-t border-[var(--border)]"
       >
         <div className="flex items-stretch">
           {mobileTabNav.map((item) => {
@@ -450,13 +435,13 @@ export function PortalLayout() {
                 aria-current={isActive ? 'page' : undefined}
                 onClick={() => setShowMoreMenu(false)}
                 className={`relative z-20 flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 pt-2.5 text-[10px] font-medium transition-colors ${
-                  isActive ? 'text-teal-600 dark:text-teal-300' : 'text-gray-400 dark:text-slate-400'
+                  isActive ? 'text-[var(--foreground)]' : 'text-[var(--subtle-foreground)]'
                 }`}
               >
                 {isActive && (
-                  <span className="absolute top-0 h-[3px] w-8 rounded-b-full bg-gradient-to-r from-teal-500 to-emerald-500 shadow-[0_2px_8px_var(--glow)]" />
+                  <span className="absolute top-0 h-[2px] w-8 bg-[var(--accent-1)]" />
                 )}
-                <item.icon className="w-5 h-5" />
+                <item.icon className={`w-5 h-5 ${isActive ? 'text-[var(--accent-1)]' : ''}`} />
                 <span className="max-w-full truncate px-0.5">{t(item.nameKey)}</span>
               </Link>
             );
@@ -470,47 +455,47 @@ export function PortalLayout() {
               aria-expanded={showMoreMenu}
               aria-haspopup="menu"
               className={`relative w-full flex flex-col items-center gap-0.5 py-2 pt-2.5 text-[10px] font-medium transition-colors ${
-                isMoreActive ? 'text-teal-600 dark:text-teal-300' : 'text-gray-400 dark:text-slate-400'
+                isMoreActive ? 'text-[var(--foreground)]' : 'text-[var(--subtle-foreground)]'
               }`}
             >
               {isMoreActive && (
-                <span className="absolute top-0 h-[3px] w-8 rounded-b-full bg-gradient-to-r from-teal-500 to-emerald-500 shadow-[0_2px_8px_var(--glow)]" />
+                <span className="absolute top-0 h-[2px] w-8 bg-[var(--accent-1)]" />
               )}
               <span className="relative">
-                <MoreHorizontal className="w-5 h-5" />
+                <MoreHorizontal className={`w-5 h-5 ${isMoreActive ? 'text-[var(--accent-1)]' : ''}`} />
                 {hasUnread && (
-                  <span className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-red-500" aria-hidden="true" />
+                  <span className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-red-600" aria-hidden="true" />
                 )}
               </span>
               <span className="max-w-full truncate px-0.5">{t('nav.portal.more')}</span>
             </button>
 
             {showMoreMenu && (
-              <div className="animate-slide-up-sm glass-menu absolute bottom-full right-2 mb-2 w-48 rounded-2xl z-20 py-1 overflow-hidden">
-                    {mobileMoreNav.map((item) => {
-                      const isActive = isRouteActive(item.href);
-                      return (
-                        <Link
-                          key={item.nameKey}
-                          to={item.href}
-                          aria-current={isActive ? 'page' : undefined}
-                          onClick={() => setShowMoreMenu(false)}
-                          className={`flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
-                            isActive
-                              ? 'text-teal-800 dark:text-teal-200 font-semibold bg-teal-500/10'
-                              : 'text-gray-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-800'
-                          }`}
-                        >
-                          <item.icon className={`w-4 h-4 ${isActive ? 'text-teal-600 dark:text-teal-300' : ''}`} />
-                          {t(item.nameKey)}
-                          {item.nameKey === 'nav.portal.notifications' && hasUnread && (
-                            <span className="ml-auto min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none">
-                              {notifCount!.unread}
-                            </span>
-                          )}
-                        </Link>
-                      );
-                    })}
+              <div className="animate-slide-up-sm absolute bottom-full right-2 mb-2 w-48 rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-md z-20 py-1 overflow-hidden">
+                {mobileMoreNav.map((item) => {
+                  const isActive = isRouteActive(item.href);
+                  return (
+                    <Link
+                      key={item.nameKey}
+                      to={item.href}
+                      aria-current={isActive ? 'page' : undefined}
+                      onClick={() => setShowMoreMenu(false)}
+                      className={`flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] transition-colors ${
+                        isActive
+                          ? 'text-[var(--foreground)] font-medium bg-[var(--surface-subtle)]'
+                          : 'text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      <item.icon className={`w-4 h-4 ${isActive ? 'text-[var(--accent-1)]' : ''}`} />
+                      {t(item.nameKey)}
+                      {item.nameKey === 'nav.portal.notifications' && hasUnread && (
+                        <span className="ml-auto min-w-[18px] h-[18px] px-1 text-[10px] font-semibold bg-red-600 text-white rounded-full flex items-center justify-center leading-none tabular-nums">
+                          {notifCount!.unread}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </div>

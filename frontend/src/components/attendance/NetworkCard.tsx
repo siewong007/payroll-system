@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle, AlertTriangle, CheckCircle2, Info, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Wifi,
+  AlertCircle, AlertTriangle, CheckCircle2, Info, Plus, RefreshCw, ShieldCheck, Trash2, Wifi,
 } from 'lucide-react';
 import {
   approveCandidate, createNetwork, deleteNetwork, dismissCandidate, getNetworkMode,
@@ -298,7 +298,7 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
   return (
     <div className="py-3 px-1 space-y-2">
       <div className="flex items-start gap-3">
-        <Sparkles className={`w-4 h-4 shrink-0 mt-0.5 ${candidate.is_anchored ? 'text-amber-500' : 'text-gray-300 dark:text-slate-600'}`} />
+        <ShieldCheck className={`w-4 h-4 shrink-0 mt-0.5 ${candidate.is_anchored ? 'text-amber-500' : 'text-[var(--muted-foreground)]'}`} />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-mono font-medium text-gray-900 dark:text-slate-100 truncate">{cidr}</p>
           <p className="text-xs text-gray-500 dark:text-slate-400">

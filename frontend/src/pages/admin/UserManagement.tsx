@@ -28,7 +28,7 @@ const PER_PAGE = 20;
 const roleBadge = (role: string) => (
   <span
     key={role}
-    className={`text-xs px-2.5 py-1 rounded-full font-medium ${roleBadgeClass(role)}`}
+    className={`text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap ${roleBadgeClass(role)}`}
   >
     {roleLabel(role)}
   </span>
@@ -132,7 +132,7 @@ export function UserManagement() {
       primary: true,
       render: (u) => <span className="font-semibold text-gray-900 dark:text-slate-100">{u.full_name}</span>,
     },
-    { key: 'email', header: t('common.email'), primary: true, render: (u) => <span className="text-gray-600 dark:text-slate-300 break-all">{u.email}</span> },
+    { key: 'email', header: t('common.email'), primary: true, render: (u) => <span className="text-gray-600 dark:text-slate-300 break-words">{u.email}</span> },
     {
       key: 'roles',
       header: t('users.role'),

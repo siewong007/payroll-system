@@ -131,17 +131,17 @@ export function PasskeyManagement() {
 
       {isLoading ? (
         <div className="flex justify-center py-8">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-slate-200" />
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[var(--foreground)]" />
         </div>
       ) : (
         <div className="space-y-2 mb-4">
           {(!passkeys || passkeys.length === 0) ? (
-            <p className="text-sm text-gray-500 dark:text-slate-400 py-4 text-center">{t('auth.passkeys.empty')}</p>
+            <p className="text-sm text-[var(--muted-foreground)] py-4 text-center">{t('auth.passkeys.empty')}</p>
           ) : (
             passkeys.map((pk: PasskeyInfo) => (
               <div
                 key={pk.id}
-                className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                className="flex items-center gap-3 p-3 rounded-lg border border-[var(--border)] hover:bg-[var(--surface-subtle)] transition-colors"
               >
                 <Fingerprint className="w-5 h-5 text-gray-400 dark:text-slate-400 shrink-0" />
                 <div className="flex-1 min-w-0">
@@ -298,7 +298,7 @@ export function PasskeyManagement() {
               type="submit"
               form="delete-passkey-form"
               disabled={deleteMutation.isPending || !deletePassword || (twoFactorEnabled && !deleteTotpCode.trim())}
-              className="btn-primary !min-h-0 !py-2 !bg-none !bg-red-600 hover:!bg-red-700"
+              className="btn-danger !py-2"
             >
               {deleteMutation.isPending ? t('auth.passkeys.deleting') : t('auth.passkeys.deleteSubmit')}
             </button>

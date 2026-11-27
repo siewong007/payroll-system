@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE attendance_records\n           SET anomaly_flags = CASE\n                   WHEN $2 = ANY(anomaly_flags) THEN anomaly_flags\n                   ELSE array_append(anomaly_flags, $2)\n               END,\n               updated_at = NOW()\n           WHERE id = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "51413770c361b1d4a1653509493a04d8c770c4efea3a7fc3db2fa431af952851"
+}

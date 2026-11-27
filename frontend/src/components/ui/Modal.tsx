@@ -127,7 +127,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
       <div
         ref={overlayRef}
         style={{ zIndex }}
-        className="animate-fade-in fixed top-0 left-0 w-screen h-screen bg-slate-950/55"
+        className="animate-fade-in fixed top-0 left-0 w-screen h-screen bg-black/45"
         onClick={onClose}
         role="presentation"
         aria-hidden="true"
@@ -147,35 +147,35 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
           aria-labelledby={title ? titleId : undefined}
           tabIndex={-1}
           className={`
-            animate-scale-in relative bg-white dark:bg-slate-900 ring-1 ring-black/5 dark:ring-white/10 w-full ${maxWidth} outline-none flex flex-col
-            shadow-2xl pointer-events-auto
-            rounded-t-2xl sm:rounded-2xl
+            animate-scale-in relative bg-[var(--card)] border border-[var(--border)] w-full ${maxWidth} outline-none flex flex-col
+            shadow-lg pointer-events-auto
+            rounded-t-xl sm:rounded-xl
             max-h-[95dvh] sm:max-h-[85vh]
           `}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           {title && (
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 shrink-0">
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-gray-300 dark:bg-slate-700 sm:hidden" />
-              <h2 id={titleId} className="text-lg font-semibold text-gray-900 dark:text-slate-100 pr-8">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border)] shrink-0">
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-[var(--border-strong)] sm:hidden" />
+              <h2 id={titleId} className="text-base font-semibold tracking-[-0.01em] text-[var(--foreground)] pr-8">
                 {title}
               </h2>
               <button
                 type="button"
                 onClick={onClose}
                 aria-label={t('a11y.closeDialog')}
-                className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center -mr-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+                className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center -mr-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)] transition-colors"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
           )}
 
           {/* Scrollable content */}
           <div
-            className={`overflow-y-auto flex-1 px-6 overscroll-contain ${
-              footer ? 'py-5' : 'pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:pb-5'
+            className={`overflow-y-auto flex-1 px-5 overscroll-contain ${
+              footer ? 'py-4' : 'pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:pb-4'
             }`}
           >
             {children}
@@ -183,7 +183,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
           {/* Sticky footer */}
           {footer && (
-            <div className="px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-gray-200/70 dark:border-slate-800 shrink-0 bg-gray-50/80 dark:bg-slate-950/60 sm:rounded-b-2xl">
+            <div className="px-5 py-3 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:pb-3 border-t border-[var(--border)] shrink-0 bg-[var(--surface-subtle)]/60 sm:rounded-b-xl">
               {footer}
             </div>
           )}

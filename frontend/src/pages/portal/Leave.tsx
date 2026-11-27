@@ -951,7 +951,7 @@ function ApplyLeaveForm({
               </div>
             )}
             {selectedType && eligibility.eligible && availableDays !== null && (
-              <p className="text-xs font-medium text-teal-700 dark:text-teal-300 tabular-nums">
+              <p className="text-xs font-medium text-[var(--accent-1)] tabular-nums">
                 {t('portal.leave.availableBalance', { count: availableDays })}
               </p>
             )}

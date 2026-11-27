@@ -40,6 +40,48 @@ pub async fn revoke_unused_for_issuer(
     Ok(())
 }
 
+/// Retire tokens during a kiosk rotation while leaving the single most-recent
+/// active token valid for a short grace window (`grace_seconds`) so employees
+/// already mid-scan or completing Face ID are not rejected at the boundary.
+pub async fn retire_for_kiosk_rotation(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    kiosk_credential_id: Uuid,
+    grace_seconds: i64,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"WITH latest AS (
+               SELECT id
+               FROM attendance_qr_tokens
+               WHERE company_id = $1
+                 AND kiosk_credential_id = $2
+                 AND used = FALSE
+                 AND expires_at >= NOW()
+               ORDER BY created_at DESC
+               LIMIT 1
+           )
+           UPDATE attendance_qr_tokens t
+           SET used = CASE
+                   WHEN t.id IN (SELECT id FROM latest) THEN FALSE
+                   ELSE TRUE
+               END,
+               expires_at = CASE
+                   WHEN t.id IN (SELECT id FROM latest)
+                       THEN LEAST(t.expires_at, NOW() + make_interval(secs => $3::double precision))
+                   ELSE t.expires_at
+               END
+           WHERE t.company_id = $1
+             AND t.kiosk_credential_id = $2
+             AND t.used = FALSE"#,
+        company_id,
+        kiosk_credential_id,
+        grace_seconds as f64,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,

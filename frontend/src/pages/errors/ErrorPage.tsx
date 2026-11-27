@@ -37,28 +37,22 @@ export function ErrorPage({ status, title, description, homePath, path }: ErrorP
     typeof window === 'undefined' || !window.history.state || window.history.state.idx > 0;
 
   return (
-    <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-gray-50 dark:bg-slate-950 px-4 pt-[max(3rem,env(safe-area-inset-top))] pb-[max(3rem,env(safe-area-inset-bottom))]">
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gray-300 dark:via-slate-700 to-transparent" />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(99,102,241,0.08),transparent_45%),radial-gradient(circle_at_85%_80%,rgba(20,184,166,0.08),transparent_45%)]"
-      />
-
+    <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-[var(--background)] px-4 pt-[max(3rem,env(safe-area-inset-top))] pb-[max(3rem,env(safe-area-inset-bottom))]">
       <section className="relative w-full max-w-lg text-center" aria-labelledby="error-title">
-        <BrandLogo variant="lockup-dark" className="mx-auto mb-10 h-10 w-auto rounded-xl" />
+        <BrandLogo variant="lockup-auto" className="mx-auto mb-8 h-9 w-auto rounded-lg" />
 
-        <div className={`mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl ring-8 ${iconClassName}`}>
-          <Icon className="h-7 w-7" aria-hidden="true" />
+        <div className={`mx-auto mb-6 flex h-12 w-12 items-center justify-center rounded-xl border border-[var(--border)] ${iconClassName}`}>
+          <Icon className="h-6 w-6" aria-hidden="true" />
         </div>
 
-        <p className="text-sm font-semibold tracking-[0.2em] text-gray-600 dark:text-slate-400">{t('errors.label', { status })}</p>
-        <h1 id="error-title" className="mt-3 text-3xl font-bold tracking-tight text-gray-950 dark:text-slate-50 sm:text-4xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted-foreground)]">{t('errors.label', { status })}</p>
+        <h1 id="error-title" className="mt-3 text-3xl font-bold tracking-tight text-[var(--foreground)] sm:text-4xl">
           {title}
         </h1>
-        <p className="mx-auto mt-4 max-w-md text-base leading-7 text-gray-600 dark:text-slate-300">{description}</p>
+        <p className="mx-auto mt-4 max-w-md text-base leading-7 text-[var(--muted-foreground)]">{description}</p>
 
         {path && (
-          <p className="mx-auto mt-4 max-w-full truncate rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-xs text-gray-600 dark:text-slate-300">
+          <p className="mx-auto mt-4 max-w-full truncate rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 font-mono text-xs text-[var(--muted-foreground)]">
             {path}
           </p>
         )}

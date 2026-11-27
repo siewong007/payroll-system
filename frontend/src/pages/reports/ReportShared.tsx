@@ -19,7 +19,7 @@ export function SummaryCard({
   className?: string;
 }) {
   return (
-    <div className="card hover-lift !px-4 !py-3 min-w-0">
+    <div className="kpi-card !px-4 !py-3 min-w-0">
       <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide truncate">{label}</p>
       <p
         title={value}

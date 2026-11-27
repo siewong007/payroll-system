@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*)::bigint AS \"count!\",\n                  COALESCE(SUM(uf.file_size_bytes), 0)::bigint AS \"bytes!\"\n           FROM uploaded_files uf\n           WHERE uf.company_id = $1\n             AND uf.uploaded_by = $2\n             AND NOT EXISTS (\n                 SELECT 1 FROM claims c\n                 WHERE c.company_id = uf.company_id\n                   AND c.receipt_url = '/api/uploads/' || uf.stored_name\n             )\n             AND NOT EXISTS (\n                 SELECT 1 FROM leave_requests lr\n                 WHERE lr.company_id = uf.company_id\n                   AND lr.attachment_url = '/api/uploads/' || uf.stored_name\n             )\n             AND NOT EXISTS (\n                 SELECT 1 FROM documents d\n                 WHERE d.company_id = uf.company_id\n                   AND d.file_url = '/api/uploads/' || uf.stored_name\n                   AND d.deleted_at IS NULL\n             )\n             AND NOT EXISTS (\n                 SELECT 1 FROM companies co\n                 WHERE co.id = uf.company_id\n                   AND co.logo_url = '/api/uploads/' || uf.stored_name\n             )\n             AND NOT EXISTS (\n                 SELECT 1 FROM attendance_records ar\n                 WHERE ar.company_id = uf.company_id\n                   AND (\n                       ar.check_in_photo_url = '/api/uploads/' || uf.stored_name\n                       OR ar.check_out_photo_url = '/api/uploads/' || uf.stored_name\n                   )\n             )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "c813ba81244c6a590482a5e8397ccb0b8f3608d47ddf3373ae7bcdf189d3ba69"
+}

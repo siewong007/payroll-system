@@ -1,16 +1,25 @@
+use aws_lc_rs::rand::SystemRandom;
+use aws_lc_rs::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, NaiveDate, NaiveTime};
 use rust_decimal::Decimal;
+use uuid::Uuid;
 
 use crate::core::error::AppError;
 use crate::models::attendance::{
-    AttendanceExportQuery, AttendanceSummaryQuery, ManualAttendanceRequest,
-    UpdateAttendanceRecordRequest,
+    AttendanceAnomaliesQuery, AttendanceExportQuery, AttendanceSummaryQuery,
+    CreatePersonalQrRequest, DeviceProofRequest, EnrollDeviceRequest, KioskCheckInRequest,
+    ManualAttendanceRequest, UpdateAttendanceRecordRequest,
+    UpdateAttendanceSecuritySettingsRequest,
 };
 use crate::models::company_location::{CreateLocationRequest, UpdateLocationRequest};
 use crate::models::work_schedule::{CreateWorkScheduleRequest, UpdateWorkScheduleRequest};
 use crate::repositories::attendance_records;
 use crate::repositories::reads::attendance as attendance_reads;
-use crate::services::{attendance_service, geofence_service, work_schedule_service};
+use crate::services::attendance_service::CheckInContext;
+use crate::services::{
+    attendance_device_service, attendance_service, geofence_service, work_schedule_service,
+};
 use crate::tests::support::{
     seed_company, seed_company_and_employee, seed_employee, seed_user, skip_if_no_db,
 };
@@ -1725,6 +1734,7 @@ fn export_range(from: &str, to: &str) -> AttendanceExportQuery {
         open_only: None,
         outside_geofence_only: None,
         offsite_network_only: None,
+        flagged_only: None,
     }
 }
 
@@ -1789,6 +1799,7 @@ async fn each_export_date_bound_defaults_independently() {
         open_only: None,
         outside_geofence_only: None,
         offsite_network_only: None,
+        flagged_only: None,
     };
     let csv = attendance_service::export_attendance_csv(&pool, company_id, &only_to)
         .await
@@ -1811,6 +1822,7 @@ async fn each_export_date_bound_defaults_independently() {
         open_only: None,
         outside_geofence_only: None,
         offsite_network_only: None,
+        flagged_only: None,
     };
     let csv = attendance_service::export_attendance_csv(&pool, company_id, &only_from)
         .await
@@ -1854,6 +1866,7 @@ async fn the_export_rejects_an_inverted_or_over_long_range() {
         open_only: None,
         outside_geofence_only: None,
         offsite_network_only: None,
+        flagged_only: None,
     };
     attendance_service::export_attendance_csv(&pool, company_id, &at_cap)
         .await
@@ -1970,5 +1983,535 @@ async fn mark_absent_for_past_date_anchors_overnight_open_session_check_to_targe
     assert!(
         marked.iter().any(|(_, emp)| *emp == employee_id),
         "today's open session must not excuse an absent day 5 days ago"
+    );
+}
+
+// ─── Anti-Buddy-Punching Integration Tests ───
+
+fn generate_test_device_keypair() -> (EcdsaKeyPair, String) {
+    let rng = SystemRandom::new();
+    let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+        .expect("generate test ECDSA P-256 pkcs8");
+    let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
+        .expect("load test ECDSA P-256 keypair");
+    let pub_b64 = URL_SAFE_NO_PAD.encode(pair.public_key().as_ref());
+    (pair, pub_b64)
+}
+
+async fn sign_device_challenge_for_test(
+    pool: &sqlx::PgPool,
+    company_id: Uuid,
+    user_id: Uuid,
+    employee_id: Uuid,
+    device_id: Uuid,
+    pair: &EcdsaKeyPair,
+    purpose: &str,
+) -> DeviceProofRequest {
+    let challenge =
+        attendance_device_service::issue_challenge(pool, company_id, user_id, employee_id, purpose)
+            .await
+            .expect("issue device challenge");
+    let payload = format!("payroll-att-device:v1:{purpose}:{}", challenge.nonce);
+    let rng = SystemRandom::new();
+    let sig = pair
+        .sign(&rng, payload.as_bytes())
+        .expect("sign device payload");
+    DeviceProofRequest {
+        device_id,
+        challenge_id: challenge.challenge_id,
+        signature: URL_SAFE_NO_PAD.encode(sig.as_ref()),
+    }
+}
+
+async fn seed_employee_with_user(pool: &sqlx::PgPool, company_id: Uuid) -> (Uuid, Uuid) {
+    let emp_id = seed_employee(pool, company_id, None, 350_000).await;
+    let user_id = seed_user(pool, company_id, "employee").await;
+    sqlx::query("UPDATE users SET employee_id = $1 WHERE id = $2")
+        .bind(emp_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("link user to employee");
+    (emp_id, user_id)
+}
+
+#[tokio::test]
+async fn kiosk_qr_uses_30s_ttl_with_10s_rotation_grace_while_console_revokes_immediately() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin_id = seed_user(&pool, company_id, "admin").await;
+
+    let (_cred, secret) = attendance_service::create_kiosk_credential(
+        &pool,
+        company_id,
+        "Lobby Kiosk",
+        admin_id,
+        None,
+    )
+    .await
+    .expect("create kiosk credential");
+
+    let (qr1, _) =
+        attendance_service::generate_qr_via_kiosk(&pool, &secret, "https://app.example", None)
+            .await
+            .expect("first kiosk QR");
+    assert_eq!(qr1.ttl_seconds, 30);
+
+    let (qr2, _) =
+        attendance_service::generate_qr_via_kiosk(&pool, &secret, "https://app.example", None)
+            .await
+            .expect("second kiosk QR");
+    assert_eq!(qr2.ttl_seconds, 30);
+
+    attendance_service::validate_qr_token(&pool, &qr1.token, company_id)
+        .await
+        .expect("previous kiosk QR must remain valid during the 10s grace window");
+    attendance_service::validate_qr_token(&pool, &qr2.token, company_id)
+        .await
+        .expect("fresh kiosk QR must be valid");
+
+    // Console QR tokens still immediately revoke the previous console token.
+    let c1 = attendance_service::generate_qr_token(&pool, company_id, "https://app.example", None)
+        .await
+        .expect("console qr 1");
+    let c2 = attendance_service::generate_qr_token(&pool, company_id, "https://app.example", None)
+        .await
+        .expect("console qr 2");
+    assert!(
+        attendance_service::validate_qr_token(&pool, &c1.token, company_id)
+            .await
+            .is_err(),
+        "console token must be immediately invalidated on regeneration"
+    );
+    attendance_service::validate_qr_token(&pool, &c2.token, company_id)
+        .await
+        .expect("latest console token must be valid");
+}
+
+#[tokio::test]
+async fn bound_device_lifecycle_auto_approve_exclusive_approval_and_cross_employee_conflict() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin_id = seed_user(&pool, company_id, "hr_manager").await;
+    let (emp_a, user_a) = seed_employee_with_user(&pool, company_id).await;
+    let (emp_b, user_b) = seed_employee_with_user(&pool, company_id).await;
+
+    attendance_device_service::update_security_settings(
+        &pool,
+        company_id,
+        &UpdateAttendanceSecuritySettingsRequest {
+            device_mode: Some("enforce".into()),
+            device_auto_approve_first: Some(true),
+            photo_mode: None,
+            photo_retention_days: None,
+        },
+        admin_id,
+        None,
+    )
+    .await
+    .expect("enable auto approve first device");
+
+    let (_pair_1, pub_1) = generate_test_device_keypair();
+    let dev_1 = attendance_device_service::enroll_device(
+        &pool,
+        company_id,
+        emp_a,
+        user_a,
+        &EnrollDeviceRequest {
+            public_key_raw: pub_1.clone(),
+            device_label: Some("iPhone A".into()),
+        },
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("first device auto-approved");
+    assert_eq!(dev_1.status, "approved");
+
+    // Cross-employee enrollment with same approved device key fails with 409 Conflict.
+    let err = attendance_device_service::enroll_device(
+        &pool,
+        company_id,
+        emp_b,
+        user_b,
+        &EnrollDeviceRequest {
+            public_key_raw: pub_1,
+            device_label: Some("Borrowed Phone".into()),
+        },
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect_err("reusing another employee's bound device must fail with Conflict");
+    assert!(matches!(err, AppError::Conflict(_)), "got {err:?}");
+
+    // Second device for emp_a starts as pending.
+    let (_pair_2, pub_2) = generate_test_device_keypair();
+    let dev_2 = attendance_device_service::enroll_device(
+        &pool,
+        company_id,
+        emp_a,
+        user_a,
+        &EnrollDeviceRequest {
+            public_key_raw: pub_2,
+            device_label: Some("New Phone".into()),
+        },
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("second device pending");
+    assert_eq!(dev_2.status, "pending");
+
+    // HR approval of dev_2 revokes dev_1 exclusively.
+    let approved_2 =
+        attendance_device_service::approve_device(&pool, company_id, dev_2.id, admin_id, None)
+            .await
+            .expect("approve replacement device");
+    assert_eq!(approved_2.status, "approved");
+
+    let devices_a = attendance_device_service::list_my_devices(&pool, company_id, emp_a)
+        .await
+        .expect("list emp_a devices");
+    let old_state = devices_a.iter().find(|d| d.id == dev_1.id).unwrap();
+    assert_eq!(old_state.status, "revoked");
+
+    let reapprove_err =
+        attendance_device_service::approve_device(&pool, company_id, dev_1.id, admin_id, None)
+            .await
+            .expect_err("revoked device cannot be re-approved");
+    assert!(matches!(reapprove_err, AppError::BadRequest(_)));
+}
+
+#[tokio::test]
+async fn device_enforce_blocks_unproven_checkin_and_checkout_records_mismatch_flag() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin_id = seed_user(&pool, company_id, "admin").await;
+    let (emp_id, user_id) = seed_employee_with_user(&pool, company_id).await;
+
+    attendance_device_service::update_security_settings(
+        &pool,
+        company_id,
+        &UpdateAttendanceSecuritySettingsRequest {
+            device_mode: Some("enforce".into()),
+            device_auto_approve_first: Some(true),
+            photo_mode: None,
+            photo_retention_days: None,
+        },
+        admin_id,
+        None,
+    )
+    .await
+    .expect("enable device enforce");
+
+    let qr = attendance_service::generate_qr_token(&pool, company_id, "https://app.example", None)
+        .await
+        .expect("generate console QR");
+
+    // Check-in without proof fails in enforce mode.
+    let ctx_no_proof = CheckInContext {
+        user_id: Some(user_id),
+        ..Default::default()
+    };
+    let err = attendance_service::check_in_qr_with_context(
+        &pool,
+        emp_id,
+        company_id,
+        &qr.token,
+        None,
+        None,
+        None,
+        &ctx_no_proof,
+    )
+    .await
+    .expect_err("enforce mode must block check-in without bound device proof");
+    assert!(matches!(
+        err,
+        AppError::Forbidden(_) | AppError::BadRequest(_)
+    ));
+
+    // Enroll device and sign valid proof.
+    let (pair, pub_raw) = generate_test_device_keypair();
+    let dev = attendance_device_service::enroll_device(
+        &pool,
+        company_id,
+        emp_id,
+        user_id,
+        &EnrollDeviceRequest {
+            public_key_raw: pub_raw,
+            device_label: Some("Pixel 9".into()),
+        },
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("enroll first device");
+    let proof = sign_device_challenge_for_test(
+        &pool, company_id, user_id, emp_id, dev.id, &pair, "check_in",
+    )
+    .await;
+
+    let checked_in = attendance_service::check_in_qr_with_context(
+        &pool,
+        emp_id,
+        company_id,
+        &qr.token,
+        None,
+        None,
+        None,
+        &CheckInContext {
+            user_id: Some(user_id),
+            device_proof: Some(proof),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("proven bound device check-in succeeds");
+    assert_eq!(checked_in.check_in_device_id, Some(dev.id));
+    assert_eq!(checked_in.is_untrusted_device, Some(false));
+
+    // Check-out without proof never locks the employee out, but flags mismatch + untrusted.
+    let checked_out = attendance_service::check_out_with_context(
+        &pool,
+        emp_id,
+        company_id,
+        None,
+        None,
+        None,
+        &CheckInContext {
+            user_id: Some(user_id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("check-out without proof must still succeed");
+    assert!(
+        checked_out
+            .anomaly_flags
+            .contains(&"untrusted_device".to_string())
+    );
+    assert!(
+        checked_out
+            .anomaly_flags
+            .contains(&"device_mismatch".to_string())
+    );
+}
+
+#[tokio::test]
+async fn shared_device_cookie_flags_both_employees_and_surfaces_in_anomaly_report() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let (emp_a, user_a) = seed_employee_with_user(&pool, company_id).await;
+    let (emp_b, user_b) = seed_employee_with_user(&pool, company_id).await;
+    let shared_cookie = Uuid::new_v4();
+
+    let qr = attendance_service::generate_qr_token(&pool, company_id, "https://app.example", None)
+        .await
+        .expect("generate QR");
+
+    let rec_a = attendance_service::check_in_qr_with_context(
+        &pool,
+        emp_a,
+        company_id,
+        &qr.token,
+        None,
+        None,
+        None,
+        &CheckInContext {
+            user_id: Some(user_a),
+            cookie_device_id: Some(shared_cookie),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("emp_a check-in");
+    assert!(!rec_a.anomaly_flags.contains(&"shared_device".to_string()));
+
+    let rec_b = attendance_service::check_in_qr_with_context(
+        &pool,
+        emp_b,
+        company_id,
+        &qr.token,
+        None,
+        None,
+        None,
+        &CheckInContext {
+            user_id: Some(user_b),
+            cookie_device_id: Some(shared_cookie),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("emp_b shared-cookie check-in");
+    assert!(rec_b.anomaly_flags.contains(&"shared_device".to_string()));
+
+    // First employee's record was retroactively flagged as well.
+    let updated_a = attendance_records::find_latest_open_24h(&pool, emp_a, company_id)
+        .await
+        .expect("load emp_a open record")
+        .expect("emp_a open record exists");
+    assert!(
+        updated_a
+            .anomaly_flags
+            .contains(&"shared_device".to_string())
+    );
+
+    let report = attendance_service::get_attendance_anomalies(
+        &pool,
+        company_id,
+        &AttendanceAnomaliesQuery {
+            date_from: None,
+            date_to: None,
+        },
+    )
+    .await
+    .expect("anomalies report");
+    assert!(report.summary.shared_device_incidents >= 1);
+    assert!(
+        report
+            .shared_device_events
+            .iter()
+            .any(|ev| ev.employees.len() >= 2)
+    );
+}
+
+#[tokio::test]
+async fn personal_qr_kiosk_camera_checkin_stores_photo_and_purges_after_retention() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin_id = seed_user(&pool, company_id, "admin").await;
+    let (emp_id, user_id) = seed_employee_with_user(&pool, company_id).await;
+
+    attendance_device_service::update_security_settings(
+        &pool,
+        company_id,
+        &UpdateAttendanceSecuritySettingsRequest {
+            device_mode: Some("none".into()),
+            device_auto_approve_first: None,
+            photo_mode: Some("required".into()),
+            photo_retention_days: Some(7),
+        },
+        admin_id,
+        None,
+    )
+    .await
+    .expect("require live photo with 7-day retention");
+
+    let (_cred, kiosk_secret) = attendance_service::create_kiosk_credential(
+        &pool,
+        company_id,
+        "Front Camera",
+        admin_id,
+        None,
+    )
+    .await
+    .expect("create kiosk credential");
+
+    let pass = attendance_service::create_personal_qr_token(
+        &pool,
+        company_id,
+        emp_id,
+        user_id,
+        &CreatePersonalQrRequest {
+            action: None,
+            device_proof: None,
+        },
+        &CheckInContext {
+            user_id: Some(user_id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("create personal QR pass");
+    assert!(pass.qr_payload.starts_with("payroll-kiosk:"));
+
+    // Missing photo rejected when photo_mode == required.
+    let err = attendance_service::kiosk_camera_check_in(
+        &pool,
+        &kiosk_secret,
+        &KioskCheckInRequest {
+            personal_token: pass.qr_payload.clone(),
+            photo_base64: None,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect_err("kiosk check-in without photo must fail when required");
+    assert!(matches!(err, AppError::BadRequest(_)));
+
+    // Minimal valid 1x1 PNG.
+    let tiny_png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let resp = attendance_service::kiosk_camera_check_in(
+        &pool,
+        &kiosk_secret,
+        &KioskCheckInRequest {
+            personal_token: pass.qr_payload,
+            photo_base64: Some(tiny_png.into()),
+        },
+        None,
+        None,
+    )
+    .await
+    .expect("kiosk camera check-in with valid photo succeeds");
+    assert_eq!(resp.action, "check_in");
+    assert!(resp.photo_captured);
+
+    let open = attendance_records::find_latest_open_24h(&pool, emp_id, company_id)
+        .await
+        .expect("find record")
+        .expect("record exists");
+    assert_eq!(open.method, "kiosk_photo");
+    let photo_url = open.check_in_photo_url.clone().expect("photo url stored");
+    let stored_name = photo_url
+        .strip_prefix(crate::core::upload_path::UPLOAD_URL_PREFIX)
+        .expect("upload prefix");
+    let disk_path = crate::core::upload_path::stored_path(stored_name).expect("stored path");
+    assert!(
+        disk_path.exists(),
+        "photo file must exist on disk before purge"
+    );
+
+    // Backdate check_in_at past the 7-day retention window and run purge.
+    sqlx::query(
+        "UPDATE attendance_records SET check_in_at = NOW() - INTERVAL '8 days' WHERE id = $1",
+    )
+    .bind(open.id)
+    .execute(&pool)
+    .await
+    .expect("age record past retention");
+
+    let purged = attendance_service::purge_expired_attendance_photos(&pool)
+        .await
+        .expect("purge expired photos");
+    assert!(purged >= 1);
+
+    let after: (Option<String>, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT check_in_photo_url, check_in_photo_purged_at FROM attendance_records WHERE id = $1",
+    )
+    .bind(open.id)
+    .fetch_one(&pool)
+    .await
+    .expect("reload record after purge");
+    assert!(after.0.is_none());
+    assert!(after.1.is_some());
+    assert!(
+        !disk_path.exists(),
+        "purged photo must be removed from disk"
     );
 }

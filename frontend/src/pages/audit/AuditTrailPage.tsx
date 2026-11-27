@@ -356,9 +356,9 @@ const ACTION_VERB_COLORS: Record<string, string> = {
   lock: 'bg-gray-900 text-white dark:bg-slate-200 dark:text-slate-900',
   reject: 'bg-orange-50 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300',
   cancel: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-500/15 dark:text-yellow-300',
-  process: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300',
-  send: 'bg-purple-50 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300',
-  bulk: 'bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300',
+  process: 'bg-[var(--accent-soft)] text-[var(--accent-1)]',
+  send: 'bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
+  bulk: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
 };
 
 function actionBadgeClass(action: string): string {

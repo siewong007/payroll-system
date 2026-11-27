@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE companies\n           SET attendance_device_mode = $2,\n               attendance_device_auto_approve_first = $3,\n               attendance_photo_mode = $4,\n               attendance_photo_retention_days = $5,\n               updated_at = NOW()\n           WHERE id = $1\n           RETURNING attendance_device_mode AS device_mode,\n                     attendance_device_auto_approve_first AS device_auto_approve_first,\n                     attendance_photo_mode AS photo_mode,\n                     attendance_photo_retention_days AS photo_retention_days",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "device_mode",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_device_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "device_auto_approve_first",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_device_auto_approve_first"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "photo_mode",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_photo_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "photo_retention_days",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_photo_retention_days"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1b4f319ddc2c2295695ff1a52d073195fd47aef0be92c81c950e8358d636c9e2"
+}

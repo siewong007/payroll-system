@@ -20,8 +20,8 @@ const SEVERITY_STYLES: Record<string, { badge: string; icon: typeof AlertTriangl
 
 function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="card hover-lift !p-4 min-w-0">
-      <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{label}</p>
+    <div className="kpi-card min-w-0">
+      <p className="text-xs text-[var(--muted-foreground)] truncate">{label}</p>
       <p
         title={value}
         className="text-lg font-bold mt-1 truncate tabular-nums text-gray-900 dark:text-slate-100"

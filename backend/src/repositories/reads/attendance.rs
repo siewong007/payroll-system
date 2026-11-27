@@ -13,6 +13,8 @@
 //! `(company_id, check_in_at)` / `(employee_id, check_in_at)` btrees serve them.
 //! The semantics are identical to bucketing by local calendar date.
 
+use std::collections::BTreeMap;
+
 use chrono::NaiveDate;
 use sqlx::{Executor, PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
@@ -20,7 +22,8 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::attendance::{
     AttendanceExportQuery, AttendanceListQuery, AttendanceRecord, AttendanceRecordWithEmployee,
-    AttendanceSummaryItem, AttendanceSummaryQuery, PaginatedAttendance,
+    AttendanceSummaryItem, AttendanceSummaryQuery, EmployeeAttendanceDeviceWithEmployee,
+    PaginatedAttendance, PairedCheckInCluster, SharedDeviceEmployeeEntry, SharedDeviceEvent,
 };
 
 /// One tenant's inputs for the auto-absent catch-up.
@@ -125,6 +128,9 @@ fn push_list_filters(qb: &mut QueryBuilder<Postgres>, tz: &str, q: &AttendanceLi
     if q.offsite_network_only.unwrap_or(false) {
         qb.push(" AND ar.is_offsite_network = TRUE");
     }
+    if q.flagged_only.unwrap_or(false) {
+        qb.push(" AND cardinality(ar.anomaly_flags) > 0");
+    }
 }
 
 const RECORD_WITH_EMPLOYEE_COLUMNS: &str = r#"
@@ -137,6 +143,14 @@ const RECORD_WITH_EMPLOYEE_COLUMNS: &str = r#"
             ar.notes,
             ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
             ar.is_offsite_network,
+            ar.check_in_device_id, ar.check_out_device_id,
+            d_in.device_label AS check_in_device_label,
+            d_out.device_label AS check_out_device_label,
+            ar.check_in_passkey_id,
+            ar.check_in_user_agent, ar.check_out_user_agent,
+            ar.is_untrusted_device, ar.anomaly_flags,
+            ar.check_in_photo_url, ar.check_out_photo_url,
+            ar.check_in_photo_purged_at, ar.check_out_photo_purged_at,
             ar.created_at"#;
 
 /// Admin attendance list (joined with employee details), with optional filters + paging.
@@ -163,6 +177,10 @@ pub async fn list_with_employee(
         r#"
            FROM attendance_records ar
            JOIN employees e ON ar.employee_id = e.id AND e.company_id = ar.company_id
+           LEFT JOIN employee_attendance_devices d_in
+             ON d_in.id = ar.check_in_device_id AND d_in.company_id = ar.company_id
+           LEFT JOIN employee_attendance_devices d_out
+             ON d_out.id = ar.check_out_device_id AND d_out.company_id = ar.company_id
            WHERE ar.company_id = "#,
     );
     data_qb.push_bind(company_id);
@@ -342,6 +360,7 @@ pub async fn export_rows(
         open_only: q.open_only,
         outside_geofence_only: q.outside_geofence_only,
         offsite_network_only: q.offsite_network_only,
+        flagged_only: q.flagged_only,
         page: None,
         per_page: None,
     };
@@ -352,6 +371,10 @@ pub async fn export_rows(
         r#"
            FROM attendance_records ar
            JOIN employees e ON ar.employee_id = e.id AND e.company_id = ar.company_id
+           LEFT JOIN employee_attendance_devices d_in
+             ON d_in.id = ar.check_in_device_id AND d_in.company_id = ar.company_id
+           LEFT JOIN employee_attendance_devices d_out
+             ON d_out.id = ar.check_out_device_id AND d_out.company_id = ar.company_id
            WHERE ar.company_id = "#,
     );
     qb.push_bind(company_id);
@@ -363,4 +386,209 @@ pub async fn export_rows(
         .build_query_as::<AttendanceRecordWithEmployee>()
         .fetch_all(pool)
         .await?)
+}
+
+pub async fn list_devices_with_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    status_filter: Option<&str>,
+) -> AppResult<Vec<EmployeeAttendanceDeviceWithEmployee>> {
+    let rows = sqlx::query_as!(
+        EmployeeAttendanceDeviceWithEmployee,
+        r#"SELECT d.id, d.company_id, d.employee_id,
+                  e.employee_number, e.full_name, e.department,
+                  d.device_label, d.public_key_fingerprint, d.user_agent,
+                  d.status, d.approved_by, d.approved_at,
+                  d.revoked_by, d.revoked_at, d.revoke_reason,
+                  d.last_used_at, d.created_at
+           FROM employee_attendance_devices d
+           JOIN employees e ON e.id = d.employee_id AND e.company_id = d.company_id
+           WHERE d.company_id = $1
+             AND ($2::text IS NULL OR d.status = $2)
+           ORDER BY
+             CASE d.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+             d.created_at DESC"#,
+        company_id,
+        status_filter,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn count_flagged_records_in_range(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    tz: &str,
+    date_from: NaiveDate,
+    date_to: NaiveDate,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!"
+           FROM attendance_records ar
+           WHERE ar.company_id = $1
+             AND cardinality(ar.anomaly_flags) > 0
+             AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
+             AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4"#,
+        company_id,
+        date_from,
+        date_to,
+        tz,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
+}
+
+pub async fn shared_device_events(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    tz: &str,
+    date_from: NaiveDate,
+    date_to: NaiveDate,
+) -> AppResult<Vec<SharedDeviceEvent>> {
+    let rows = sqlx::query!(
+        r#"WITH cookie_events AS (
+               SELECT (ar.check_in_at AT TIME ZONE $4)::date AS local_date,
+                      ar.check_in_cookie_id AS cookie_id,
+                      ar.employee_id,
+                      ar.check_in_at AS event_at
+               FROM attendance_records ar
+               WHERE ar.company_id = $1
+                 AND ar.check_in_cookie_id IS NOT NULL
+                 AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
+                 AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4
+               UNION ALL
+               SELECT (ar.check_out_at AT TIME ZONE $4)::date AS local_date,
+                      ar.check_out_cookie_id AS cookie_id,
+                      ar.employee_id,
+                      ar.check_out_at AS event_at
+               FROM attendance_records ar
+               WHERE ar.company_id = $1
+                 AND ar.check_out_cookie_id IS NOT NULL
+                 AND ar.check_out_at IS NOT NULL
+                 AND ar.check_out_at >= ($2::date)::timestamp AT TIME ZONE $4
+                 AND ar.check_out_at < ($3::date + 1)::timestamp AT TIME ZONE $4
+           ),
+           per_emp_day AS (
+               SELECT local_date, cookie_id, employee_id, MIN(event_at) AS first_event_at
+               FROM cookie_events
+               GROUP BY 1, 2, 3
+           ),
+           shared AS (
+               SELECT local_date, cookie_id
+               FROM per_emp_day
+               GROUP BY 1, 2
+               HAVING COUNT(*) >= 2
+           )
+           SELECT s.local_date AS "local_date!",
+                  SUBSTRING(encode(sha256(s.cookie_id::text::bytea), 'hex') FROM 1 FOR 10) AS "device_tag!",
+                  ped.employee_id AS "employee_id!",
+                  e.employee_number AS "employee_number!",
+                  e.full_name AS "full_name!",
+                  ped.first_event_at AS "check_in_at!"
+           FROM shared s
+           JOIN per_emp_day ped ON ped.local_date = s.local_date AND ped.cookie_id = s.cookie_id
+           JOIN employees e ON e.id = ped.employee_id AND e.company_id = $1
+           ORDER BY s.local_date DESC, "device_tag!", ped.first_event_at ASC
+           LIMIT 200"#,
+        company_id,
+        date_from,
+        date_to,
+        tz,
+    )
+    .fetch_all(executor)
+    .await?;
+
+    let mut grouped: BTreeMap<(NaiveDate, String), Vec<SharedDeviceEmployeeEntry>> =
+        BTreeMap::new();
+    for r in rows {
+        grouped
+            .entry((r.local_date, r.device_tag))
+            .or_default()
+            .push(SharedDeviceEmployeeEntry {
+                employee_id: r.employee_id,
+                employee_number: r.employee_number,
+                full_name: r.full_name,
+                check_in_at: r.check_in_at,
+            });
+    }
+
+    let mut events: Vec<SharedDeviceEvent> = grouped
+        .into_iter()
+        .map(|((local_date, device_tag), employees)| SharedDeviceEvent {
+            local_date,
+            device_tag,
+            employee_count: employees.len() as i64,
+            employees,
+        })
+        .collect();
+    events.sort_by_key(|a| std::cmp::Reverse(a.local_date));
+    Ok(events)
+}
+
+pub async fn paired_checkins(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    tz: &str,
+    date_from: NaiveDate,
+    date_to: NaiveDate,
+) -> AppResult<Vec<PairedCheckInCluster>> {
+    let rows = sqlx::query_as!(
+        PairedCheckInCluster,
+        r#"WITH daily AS (
+               SELECT ar.employee_id,
+                      (ar.check_in_at AT TIME ZONE $4)::date AS local_date,
+                      MIN(ar.check_in_at) AS check_in_at,
+                      MAX(ar.check_out_at) AS check_out_at,
+                      (ARRAY_AGG(ar.latitude ORDER BY ar.check_in_at) FILTER (WHERE ar.latitude IS NOT NULL))[1] AS lat,
+                      (ARRAY_AGG(ar.longitude ORDER BY ar.check_in_at) FILTER (WHERE ar.longitude IS NOT NULL))[1] AS lng
+               FROM attendance_records ar
+               WHERE ar.company_id = $1
+                 AND ar.status <> 'absent'
+                 AND ar.method <> 'manual'
+                 AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
+                 AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4
+               GROUP BY ar.employee_id, (ar.check_in_at AT TIME ZONE $4)::date
+           )
+           SELECT a.employee_id AS "employee_a_id!",
+                  ea.employee_number AS "employee_a_number!",
+                  ea.full_name AS "employee_a_name!",
+                  b.employee_id AS "employee_b_id!",
+                  eb.employee_number AS "employee_b_number!",
+                  eb.full_name AS "employee_b_name!",
+                  COUNT(*)::bigint AS "paired_days!",
+                  COUNT(*) FILTER (
+                      WHERE a.check_out_at IS NOT NULL
+                        AND b.check_out_at IS NOT NULL
+                        AND ABS(EXTRACT(EPOCH FROM (a.check_out_at - b.check_out_at))) <= 60
+                  )::bigint AS "paired_checkout_days!",
+                  COUNT(*) FILTER (
+                      WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
+                        AND b.lat IS NOT NULL AND b.lng IS NOT NULL
+                        AND ABS(a.lat - b.lat) <= 0.00015
+                        AND ABS(a.lng - b.lng) <= 0.00015
+                  )::bigint AS "co_located_days!",
+                  ROUND(AVG(ABS(EXTRACT(EPOCH FROM (a.check_in_at - b.check_in_at)))))::bigint AS "avg_gap_seconds!",
+                  MAX(a.local_date) AS "last_paired_date!"
+           FROM daily a
+           JOIN daily b
+             ON a.local_date = b.local_date
+            AND a.employee_id < b.employee_id
+            AND ABS(EXTRACT(EPOCH FROM (a.check_in_at - b.check_in_at))) <= 60
+           JOIN employees ea ON ea.id = a.employee_id AND ea.company_id = $1
+           JOIN employees eb ON eb.id = b.employee_id AND eb.company_id = $1
+           GROUP BY a.employee_id, ea.employee_number, ea.full_name,
+                    b.employee_id, eb.employee_number, eb.full_name
+           HAVING COUNT(*) >= 3
+           ORDER BY COUNT(*) DESC, MAX(a.local_date) DESC
+           LIMIT 100"#,
+        company_id,
+        date_from,
+        date_to,
+        tz,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
 }

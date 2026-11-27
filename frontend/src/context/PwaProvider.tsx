@@ -69,7 +69,6 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const [pushServerEnabled, setPushServerEnabled] = useState(false);
   const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(null);
   const [pushSubscribed, setPushSubscribed] = useState(false);
-  const prevUnreadRef = useRef<number | null>(null);
 
   const syncEnvironment = useCallback(() => {
     const standalone = isRunningStandalone();
@@ -201,7 +200,6 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isAuthenticated || user?.must_change_password) {
       setPushSubscribed(false);
-      prevUnreadRef.current = null;
       updateAppBadge(0);
       return;
     }
@@ -229,46 +227,6 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [isAuthenticated, user?.id, user?.company_id, user?.must_change_password, platform, syncPushWithKey]);
-
-  const { data: notifCount } = useQuery({
-    queryKey: ['notification-count'],
-    queryFn: getNotificationCount,
-    refetchInterval: 30_000,
-    enabled: isAuthenticated && !user?.must_change_password,
-  });
-
-  // Keep app icon badge synced and fire foreground local notification fallback
-  // only when real server Web Push is not active for this device.
-  useEffect(() => {
-    if (!isAuthenticated || user?.must_change_password || !notifCount) {
-      return;
-    }
-    const unread = notifCount.unread;
-    updateAppBadge(unread);
-
-    const prev = prevUnreadRef.current;
-    prevUnreadRef.current = unread;
-    if (
-      prev !== null &&
-      unread > prev &&
-      notificationStatus === 'granted' &&
-      !pushSubscribed
-    ) {
-      void getNotifications(true, 1)
-        .then((items) => {
-          const latest = items[0];
-          if (latest) {
-            return showLocalNotification(latest.title, {
-              body: latest.message,
-              tag: `notif-${latest.id}`,
-              url: '/portal/notifications',
-            });
-          }
-          return false;
-        })
-        .catch(() => undefined);
-    }
-  }, [isAuthenticated, notifCount, notificationStatus, pushSubscribed, user?.must_change_password]);
 
   const openInstallModal = useCallback(() => setInstallModalOpen(true), []);
   const closeInstallModal = useCallback(() => setInstallModalOpen(false), []);
@@ -432,6 +390,11 @@ export function PwaProvider({ children }: { children: ReactNode }) {
 
   return (
     <PwaContext.Provider value={value}>
+      <NotificationBadgeSync
+        enabled={isAuthenticated && Boolean(user?.company_id) && !user?.must_change_password}
+        notificationStatus={notificationStatus}
+        pushSubscribed={pushSubscribed}
+      />
       {children}
       {installModalOpen && (
         <Suspense fallback={null}>
@@ -440,4 +403,61 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       )}
     </PwaContext.Provider>
   );
+}
+
+/** Leaf subscriber so 60s unread count polls never re-render PwaProvider consumers. */
+function NotificationBadgeSync({
+  enabled,
+  notificationStatus,
+  pushSubscribed,
+}: {
+  enabled: boolean;
+  notificationStatus: NotificationStatus;
+  pushSubscribed: boolean;
+}) {
+  const prevUnreadRef = useRef<number | null>(null);
+
+  const { data: notifCount } = useQuery({
+    queryKey: ['notification-count'],
+    queryFn: getNotificationCount,
+    staleTime: 25_000,
+    refetchInterval: 60_000,
+    enabled,
+  });
+
+  useEffect(() => {
+    if (!enabled) {
+      prevUnreadRef.current = null;
+      return;
+    }
+    if (!notifCount) return;
+
+    const unread = notifCount.unread;
+    updateAppBadge(unread);
+
+    const prev = prevUnreadRef.current;
+    prevUnreadRef.current = unread;
+    if (
+      prev !== null &&
+      unread > prev &&
+      notificationStatus === 'granted' &&
+      !pushSubscribed
+    ) {
+      void getNotifications(true, 1)
+        .then((items) => {
+          const latest = items[0];
+          if (latest) {
+            return showLocalNotification(latest.title, {
+              body: latest.message,
+              tag: `notif-${latest.id}`,
+              url: '/portal/notifications',
+            });
+          }
+          return false;
+        })
+        .catch(() => undefined);
+    }
+  }, [enabled, notifCount, notificationStatus, pushSubscribed]);
+
+  return null;
 }

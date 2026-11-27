@@ -108,7 +108,7 @@ export function TwoFactorSetup() {
     return (
       <div className="card">
         <div className="flex justify-center py-8">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-slate-200" />
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[var(--foreground)]" />
         </div>
       </div>
     );
@@ -118,7 +118,7 @@ export function TwoFactorSetup() {
     <div className="card">
       <div className="section-header">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-gray-400 dark:text-slate-400" />
+          <ShieldCheck className="w-4 h-4 text-[var(--muted-foreground)]" />
           <span className="section-title">{t('auth.twoFactor.setupTitle')}</span>
         </div>
         {status?.enabled ? (
@@ -148,7 +148,7 @@ export function TwoFactorSetup() {
           <div className="bg-amber-50 dark:bg-amber-500/15 border border-amber-200/70 dark:border-amber-500/30 text-amber-800 dark:text-amber-200 text-sm px-4 py-3 rounded-xl">
             {t('auth.twoFactor.backupWarning')}
           </div>
-          <div className="grid grid-cols-2 gap-2 p-4 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 border border-gray-200/80 dark:border-slate-700 rounded-xl font-mono text-sm">
+          <div className="grid grid-cols-2 gap-2 p-4 bg-[var(--surface-subtle)] text-[var(--foreground)] border border-[var(--border)] rounded-lg font-mono text-sm">
             {backupCodes.map((code) => (
               <div key={code}>{code}</div>
             ))}

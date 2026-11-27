@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\"\n           FROM attendance_records ar\n           WHERE ar.company_id = $1\n             AND cardinality(ar.anomaly_flags) > 0\n             AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4\n             AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b7353860a66919f031cc50aee3e4b0546329e939997536ca174b74ecb88d3de7"
+}

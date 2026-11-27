@@ -77,8 +77,8 @@ export function StepUpConfirmModal({
             disabled={!canSubmit}
             className={
               variant === 'danger'
-                ? 'inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 transition-colors disabled:opacity-50'
-                : 'btn-primary inline-flex items-center justify-center gap-2 disabled:opacity-50'
+                ? 'btn-danger'
+                : 'btn-primary disabled:opacity-50'
             }
           >
             {pending ? (

@@ -22,7 +22,7 @@ import {
   ScanLine,
   UserCheck,
   LayoutDashboard,
-  Sparkles,
+  UserCircle,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -35,6 +35,7 @@ import { getPendingApprovalCounts } from '@/api/approvals';
 import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
 import { userCan, userCanAny } from '@/lib/usePermissions';
 import { useMediaQuery } from '@/lib/useMediaQuery';
+import { prefetchRoute } from '@/lib/routePrefetch';
 import type { PermissionKey } from '@/api/permissions';
 
 const SIDEBAR_COLLAPSED_KEY = 'payroll-sidebar-collapsed';
@@ -61,7 +62,7 @@ const navigation = [
   { nameKey: 'nav.letters', href: '/letters', icon: Mail, requiresAny: ['view_email_logs', 'manage_email_templates', 'send_letters'], hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.myAttendance', href: '/my/attendance', icon: UserCheck, requiresEmployeeProfile: true, section: 'personal' },
-  { nameKey: 'nav.myPortal', href: '/portal/profile', icon: Sparkles, requiresEmployeeProfile: true, section: 'personal' },
+  { nameKey: 'nav.myPortal', href: '/portal/profile', icon: UserCircle, requiresEmployeeProfile: true, section: 'personal' },
   { nameKey: 'nav.companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
   { nameKey: 'nav.users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
   { nameKey: 'nav.roles', href: '/roles', icon: Shield, requires: 'view_user_directory', section: 'admin' },
@@ -119,21 +120,18 @@ function SidebarContent({
 
   return (
     <aside
-      className={`relative flex flex-col h-full overflow-hidden bg-slate-950 text-slate-100 border-r border-white/10 transition-[width] duration-200 ${
-        collapsed ? 'w-[76px]' : 'w-64'
+      className={`relative flex flex-col h-full overflow-hidden bg-[var(--sidebar)] text-[var(--foreground)] border-r border-[var(--border)] transition-[width] duration-150 ${
+        collapsed ? 'w-16' : 'w-56'
       }`}
     >
-      {/* Aurora glow inside the rail */}
-      <div aria-hidden className="aurora-rail pointer-events-none absolute inset-0" />
-
       {/* Logo + collapse / close aligned with top header height */}
       <div
-        className={`relative h-14 border-b border-white/10 flex items-center shrink-0 ${
-          collapsed ? 'px-3 justify-center' : 'px-4 justify-between'
+        className={`relative h-12 border-b border-[var(--border)] flex items-center shrink-0 ${
+          collapsed ? 'px-2 justify-center' : 'px-3.5 justify-between'
         }`}
       >
         {!collapsed && (
-          <BrandLogo variant="lockup-dark" priority className="h-7 w-auto rounded-lg drop-shadow-md" />
+          <BrandLogo variant="lockup-auto" priority className="h-6 w-auto" />
         )}
         <div className="flex items-center gap-1 shrink-0">
           {onToggleCollapse && !onClose && (
@@ -142,7 +140,7 @@ function SidebarContent({
               onClick={onToggleCollapse}
               title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
               aria-label={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
-              className="hidden md:inline-flex p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast shrink-0"
+              className="hidden md:inline-flex p-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] rounded-md transition-all-fast shrink-0"
             >
               {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
             </button>
@@ -152,7 +150,7 @@ function SidebarContent({
               type="button"
               onClick={onClose}
               aria-label={t('a11y.closeMenu')}
-              className="md:hidden min-h-11 min-w-11 inline-flex items-center justify-center -mr-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
+              className="md:hidden min-h-11 min-w-11 inline-flex items-center justify-center -mr-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] rounded-md transition-all-fast"
             >
               <X className="w-5 h-5" />
             </button>
@@ -168,14 +166,14 @@ function SidebarContent({
       )}
 
       {/* Navigation */}
-      <nav className="relative flex-1 py-3 px-3 overflow-y-auto scrollbar-thin">
+      <nav className="relative flex-1 py-2.5 px-2.5 overflow-y-auto scrollbar-thin">
         {sections.map(({ key, labelKey }) => {
           const items = visibleNav.filter((item) => item.section === key);
           if (items.length === 0) return null;
           return (
             <div key={key}>
               <p
-                className={`px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 ${
+                className={`px-2 pt-3 pb-1 text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--subtle-foreground)] ${
                   collapsed ? 'sr-only' : ''
                 }`}
               >
@@ -194,33 +192,32 @@ function SidebarContent({
                       key={item.nameKey}
                       to={item.href}
                       onClick={onClose}
+                      onMouseEnter={() => prefetchRoute(item.href)}
+                      onFocus={() => prefetchRoute(item.href)}
                       title={collapsed ? label : undefined}
+                      aria-current={isActive ? 'page' : undefined}
                       className={`group relative flex items-center ${
-                        collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5'
-                      } rounded-xl text-sm font-medium transition-all-fast ${
-                        isActive ? 'text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-white/5'
+                        collapsed ? 'justify-center px-2 py-2' : 'gap-2.5 px-2.5 py-1.5'
+                      } rounded-md text-[13px] transition-all-fast ${
+                        isActive
+                          ? 'bg-[var(--card)] text-[var(--foreground)] font-medium border border-[var(--border)] shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
+                          : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-black/[0.04] dark:hover:bg-white/[0.05] border border-transparent'
                       }`}
                     >
-                      {isActive && (
-                        <span className="absolute inset-0 rounded-xl bg-white/10 ring-1 ring-white/15 shadow-[0_0_20px_-6px_var(--glow)]" />
-                      )}
-                      {isActive && (
-                        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-gradient-to-b from-indigo-400 to-violet-400 shadow-[0_0_10px_var(--glow)]" />
-                      )}
                       <item.icon
-                        className={`relative w-[18px] h-[18px] shrink-0 transition-colors ${
-                          isActive ? 'text-indigo-300' : 'text-slate-500 group-hover:text-slate-300'
+                        className={`w-4 h-4 shrink-0 ${
+                          isActive ? 'text-[var(--accent-1)]' : 'text-[var(--subtle-foreground)] group-hover:text-[var(--foreground)]'
                         }`}
                       />
-                      <span className={collapsed ? 'sr-only' : 'relative truncate flex-1'}>{label}</span>
+                      <span className={collapsed ? 'sr-only' : 'truncate flex-1'}>{label}</span>
                       {item.href === '/approvals' && pendingApprovals > 0 && (
                         <span
                           aria-hidden="true"
                           data-badge={pendingApprovals > 99 ? '99+' : String(pendingApprovals)}
                           className={
                             collapsed
-                              ? 'absolute right-2 top-2 h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.7)]'
-                              : 'relative ml-auto inline-flex min-w-[20px] h-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-300 ring-1 ring-amber-400/30 after:content-[attr(data-badge)]'
+                              ? 'absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-amber-500'
+                              : 'ml-auto inline-flex min-w-[18px] h-4 items-center justify-center rounded-full bg-amber-500/15 border border-amber-500/25 px-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 tabular-nums after:content-[attr(data-badge)]'
                           }
                         />
                       )}
@@ -235,31 +232,32 @@ function SidebarContent({
 
       {/* Compact User Footer */}
       <div
-        className="relative p-3.5 border-t border-white/10 bg-white/[0.03] shrink-0"
-        style={{ paddingBottom: 'max(0.875rem, env(safe-area-inset-bottom))' }}
+        className="relative p-2.5 border-t border-[var(--border)] bg-[var(--sidebar)] shrink-0"
+        style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom))' }}
       >
-        <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'gap-2'}`}>
+        <div className={`flex items-center ${collapsed ? 'flex-col gap-1.5' : 'gap-1.5'}`}>
           <Link
             to="/account"
             onClick={onClose}
+            onMouseEnter={() => prefetchRoute('/account')}
             title={t('nav.accountSecurity')}
             aria-label={collapsed ? t('nav.accountSecurity') : undefined}
-            className={`group flex items-center min-w-0 rounded-xl transition-colors ${
-              collapsed ? 'p-1.5 justify-center' : 'flex-1 gap-3 p-1.5 -m-1'
+            className={`group flex items-center min-w-0 rounded-md transition-colors ${
+              collapsed ? 'p-1.5 justify-center' : 'flex-1 gap-2.5 px-2 py-1.5'
             } ${
               location.pathname === '/account'
-                ? 'bg-white/10 ring-1 ring-white/15'
-                : 'hover:bg-white/10'
+                ? 'bg-[var(--card)] border border-[var(--border)]'
+                : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05] border border-transparent'
             }`}
           >
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 ring-2 ring-white/15 shadow-[0_0_16px_-4px_var(--glow)] flex items-center justify-center text-sm font-semibold text-white shrink-0">
+            <div className="w-7 h-7 rounded-md bg-[var(--accent-1)] text-[var(--accent-fg)] flex items-center justify-center text-xs font-semibold shrink-0">
               {user?.full_name?.[0] || 'U'}
             </div>
             <div className={collapsed ? 'sr-only' : 'flex-1 min-w-0'}>
-              <p className="text-sm font-semibold text-white truncate group-hover:text-indigo-200 transition-colors">
+              <p className="text-xs font-medium text-[var(--foreground)] truncate">
                 {user?.full_name || t('common.user')}
               </p>
-              <p className="text-xs text-slate-400 truncate capitalize">
+              <p className="text-[11px] text-[var(--subtle-foreground)] truncate capitalize">
                 {roleList(user).map((role) => t(`roles.${role}`)).join(', ')}
               </p>
             </div>
@@ -269,7 +267,7 @@ function SidebarContent({
             onClick={() => void logout()}
             title={t('nav.signOut')}
             aria-label={t('nav.signOut')}
-            className="p-2 text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-all-fast shrink-0"
+            className="p-1.5 text-[var(--muted-foreground)] hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 rounded-md transition-all-fast shrink-0"
           >
             <LogOut className="w-4 h-4" />
           </button>
@@ -330,7 +328,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       {open && (
         <>
           <div
-            className="animate-fade-in fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 md:hidden"
+            className="animate-fade-in fixed inset-0 bg-black/45 z-40 md:hidden"
             onClick={onClose}
           />
           <div className="animate-slide-in-left fixed inset-y-0 left-0 z-50 md:hidden h-[100dvh]">

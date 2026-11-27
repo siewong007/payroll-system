@@ -166,8 +166,15 @@ pub fn create_router(state: AppState) -> Router {
             HeaderValue::from_static("no-cache"),
         ));
 
+    const ATTENDANCE_PHOTO_REQUEST_MAX_BYTES: usize = 1024 * 1024; // 1 MB
+
     let rate_limited_kiosk = Router::new()
         .route("/attendance/kiosk/qr", post(attendance::kiosk_qr))
+        .route(
+            "/attendance/kiosk/check-in",
+            post(attendance::kiosk_check_in)
+                .layer(DefaultBodyLimit::max(ATTENDANCE_PHOTO_REQUEST_MAX_BYTES)),
+        )
         .layer(GovernorLayer::new(kiosk_rate_limit.clone()))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
@@ -359,16 +366,42 @@ pub fn create_router(state: AppState) -> Router {
             "/attendance/qr/generate",
             post(attendance::generate_qr_token),
         )
-        .route("/attendance/check-in/qr", post(attendance::check_in_qr))
+        .route(
+            "/attendance/check-in/qr",
+            post(attendance::check_in_qr)
+                .layer(DefaultBodyLimit::max(ATTENDANCE_PHOTO_REQUEST_MAX_BYTES)),
+        )
         .route(
             "/attendance/check-in/face-id/begin",
             post(attendance::check_in_face_id_begin),
         )
         .route(
             "/attendance/check-in/face-id",
-            post(attendance::check_in_face_id),
+            post(attendance::check_in_face_id)
+                .layer(DefaultBodyLimit::max(ATTENDANCE_PHOTO_REQUEST_MAX_BYTES)),
         )
-        .route("/attendance/check-out", post(attendance::check_out))
+        .route(
+            "/attendance/check-in/qr-face-id",
+            post(attendance::check_in_qr_face_id)
+                .layer(DefaultBodyLimit::max(ATTENDANCE_PHOTO_REQUEST_MAX_BYTES)),
+        )
+        .route(
+            "/attendance/check-out",
+            post(attendance::check_out)
+                .layer(DefaultBodyLimit::max(ATTENDANCE_PHOTO_REQUEST_MAX_BYTES)),
+        )
+        .route(
+            "/attendance/devices/challenge",
+            post(attendance::create_device_challenge),
+        )
+        .route(
+            "/attendance/devices/enroll",
+            post(attendance::enroll_device),
+        )
+        .route(
+            "/attendance/personal-qr",
+            post(attendance::create_personal_qr),
+        )
         .layer(GovernorLayer::new(session_auth_rate_limit.clone()))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
@@ -828,6 +861,22 @@ pub fn create_router(state: AppState) -> Router {
         // Employee portal (check-in/out routes rate-limited above)
         .route("/attendance/my/today", get(attendance::my_today))
         .route("/attendance/my", get(attendance::my_attendance))
+        .route("/attendance/devices/my", get(attendance::my_devices))
+        // Bound devices & security settings & anomalies (admin)
+        .route("/attendance/devices", get(attendance::list_company_devices))
+        .route(
+            "/attendance/devices/{id}/approve",
+            post(attendance::approve_device),
+        )
+        .route(
+            "/attendance/devices/{id}/revoke",
+            post(attendance::revoke_device),
+        )
+        .route(
+            "/attendance/security-settings",
+            get(attendance::get_security_settings).put(attendance::update_security_settings),
+        )
+        .route("/attendance/anomalies", get(attendance::get_anomalies))
         // Summary (admin; CSV export is in rate_limited_exports above)
         .route("/attendance/summary", get(attendance::attendance_summary))
         // Admin management

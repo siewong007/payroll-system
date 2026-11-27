@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT attendance_device_mode AS device_mode,\n                  attendance_device_auto_approve_first AS device_auto_approve_first,\n                  attendance_photo_mode AS photo_mode,\n                  attendance_photo_retention_days AS photo_retention_days\n           FROM companies\n           WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "device_mode",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_device_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "device_auto_approve_first",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_device_auto_approve_first"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "photo_mode",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_photo_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "photo_retention_days",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_photo_retention_days"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b21f9caf25974c343aa6e43128062eebc575a642ad07dcd6390690ea7595fbc8"
+}

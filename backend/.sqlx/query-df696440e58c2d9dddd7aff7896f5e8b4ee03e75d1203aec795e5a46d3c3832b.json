@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n               SELECT 1 FROM employee_attendance_devices\n               WHERE company_id = $1\n                 AND employee_id <> $2\n                 AND public_key_fingerprint = $3\n                 AND status = 'approved'\n           ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "df696440e58c2d9dddd7aff7896f5e8b4ee03e75d1203aec795e5a46d3c3832b"
+}

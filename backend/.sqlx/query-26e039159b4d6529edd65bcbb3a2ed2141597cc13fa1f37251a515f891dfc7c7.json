@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_personal_qr_tokens\n         WHERE expires_at < NOW() - INTERVAL '1 day'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "26e039159b4d6529edd65bcbb3a2ed2141597cc13fa1f37251a515f891dfc7c7"
+}

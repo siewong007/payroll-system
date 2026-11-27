@@ -46,16 +46,16 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const Icon = variant === 'danger' ? Trash2 : variant === 'warning' ? AlertTriangle : HelpCircle;
   const badgeStyle =
     variant === 'danger'
-      ? 'bg-red-50 text-red-600 ring-red-100 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-500/20'
+      ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-500/12 dark:text-red-300 dark:border-red-500/25'
       : variant === 'warning'
-        ? 'bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/20'
-        : 'bg-indigo-50 text-indigo-600 ring-indigo-100 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-500/20';
+        ? 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/25'
+        : 'bg-[var(--surface-subtle)] text-[var(--accent-1)] border-[var(--border)]';
 
   const confirmButtonClass =
     variant === 'danger'
-      ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 min-h-[44px] text-sm font-semibold text-white shadow-sm transition-all hover:bg-red-700 active:scale-[0.98]'
+      ? 'btn-danger'
       : variant === 'warning'
-        ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 min-h-[44px] text-sm font-semibold text-white shadow-sm transition-all hover:bg-amber-700 active:scale-[0.98]'
+        ? 'inline-flex items-center justify-center gap-2 rounded-md bg-amber-600 px-3.5 py-1.5 min-h-11 sm:min-h-9 text-[13px] font-medium text-white transition-colors hover:bg-amber-700'
         : 'btn-primary';
 
   return (
@@ -77,11 +77,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           </div>
         }
       >
-        <div className="flex items-start gap-3.5">
-          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-4 ${badgeStyle}`}>
-            <Icon className="h-5 w-5" aria-hidden="true" />
+        <div className="flex items-start gap-3">
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${badgeStyle}`}>
+            <Icon className="h-4 w-4" aria-hidden="true" />
           </div>
-          <p className="pt-1 text-sm leading-relaxed text-gray-600 dark:text-slate-300">
+          <p className="pt-0.5 text-[13px] leading-relaxed text-[var(--muted-foreground)]">
             {active?.description}
           </p>
         </div>

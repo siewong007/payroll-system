@@ -33,7 +33,7 @@ export function OfflineBanner() {
     <div
       role="status"
       aria-live="polite"
-      className="sticky top-0 z-[70] flex items-center justify-center gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/90 dark:text-amber-100"
+      className="sticky top-0 z-[70] flex items-center justify-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/90 dark:text-amber-200"
     >
       <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span>{t('common.offlineBanner')}</span>

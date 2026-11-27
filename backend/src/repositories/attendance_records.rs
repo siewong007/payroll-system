@@ -10,6 +10,69 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::attendance::AttendanceRecord;
 
+pub struct CheckInInsertParams<'a> {
+    pub company_id: Uuid,
+    pub employee_id: Uuid,
+    pub method: &'a str,
+    pub status: &'a str,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub qr_token_id: Option<Uuid>,
+    pub is_outside_geofence: bool,
+    pub is_offsite_network: Option<bool>,
+    pub session_id: Option<Uuid>,
+    pub device_id: Option<Uuid>,
+    pub cookie_id: Option<Uuid>,
+    pub passkey_id: Option<Uuid>,
+    pub user_agent: Option<&'a str>,
+    pub is_untrusted_device: Option<bool>,
+    pub anomaly_flags: &'a [String],
+    pub photo_url: Option<&'a str>,
+}
+
+pub async fn insert_checked_in(
+    executor: impl Executor<'_, Database = Postgres>,
+    params: &CheckInInsertParams<'_>,
+) -> AppResult<AttendanceRecord> {
+    let record = sqlx::query_as!(
+        AttendanceRecord,
+        r#"INSERT INTO attendance_records
+           (company_id, employee_id, method, status, latitude, longitude, qr_token_id,
+            is_outside_geofence, is_offsite_network,
+            check_in_session_id, check_in_device_id, check_in_cookie_id, check_in_passkey_id,
+            check_in_user_agent, is_untrusted_device, anomaly_flags, check_in_photo_url)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                     check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,
+                     check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,
+                     check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,
+                     check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,
+                     created_at, updated_at"#,
+        params.company_id,
+        params.employee_id,
+        params.method,
+        params.status,
+        params.latitude,
+        params.longitude,
+        params.qr_token_id,
+        params.is_outside_geofence,
+        params.is_offsite_network,
+        params.session_id,
+        params.device_id,
+        params.cookie_id,
+        params.passkey_id,
+        params.user_agent,
+        params.is_untrusted_device,
+        params.anomaly_flags,
+        params.photo_url,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(record)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_qr(
     executor: impl Executor<'_, Database = Postgres>,
@@ -22,27 +85,29 @@ pub async fn insert_qr(
     is_outside_geofence: bool,
     is_offsite_network: Option<bool>,
 ) -> AppResult<AttendanceRecord> {
-    let record = sqlx::query_as!(
-        AttendanceRecord,
-        r#"INSERT INTO attendance_records
-           (company_id, employee_id, method, status, latitude, longitude, qr_token_id, is_outside_geofence, is_offsite_network)
-           VALUES ($1, $2, 'qr_code', $3, $4, $5, $6, $7, $8)
-           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
-                     created_at, updated_at"#,
-        company_id,
-        employee_id,
-        status,
-        latitude,
-        longitude,
-        qr_token_id,
-        is_outside_geofence,
-        is_offsite_network,
+    insert_checked_in(
+        executor,
+        &CheckInInsertParams {
+            company_id,
+            employee_id,
+            method: "qr_code",
+            status,
+            latitude,
+            longitude,
+            qr_token_id: Some(qr_token_id),
+            is_outside_geofence,
+            is_offsite_network,
+            session_id: None,
+            device_id: None,
+            cookie_id: None,
+            passkey_id: None,
+            user_agent: None,
+            is_untrusted_device: None,
+            anomaly_flags: &[],
+            photo_url: None,
+        },
     )
-    .fetch_one(executor)
-    .await?;
-    Ok(record)
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -56,35 +121,50 @@ pub async fn insert_face(
     is_outside_geofence: bool,
     is_offsite_network: Option<bool>,
 ) -> AppResult<AttendanceRecord> {
-    let record = sqlx::query_as!(
-        AttendanceRecord,
-        r#"INSERT INTO attendance_records
-           (company_id, employee_id, method, status, latitude, longitude, is_outside_geofence, is_offsite_network)
-           VALUES ($1, $2, 'face_id', $3, $4, $5, $6, $7)
-           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
-                     created_at, updated_at"#,
-        company_id,
-        employee_id,
-        status,
-        latitude,
-        longitude,
-        is_outside_geofence,
-        is_offsite_network,
+    insert_checked_in(
+        executor,
+        &CheckInInsertParams {
+            company_id,
+            employee_id,
+            method: "face_id",
+            status,
+            latitude,
+            longitude,
+            qr_token_id: None,
+            is_outside_geofence,
+            is_offsite_network,
+            session_id: None,
+            device_id: None,
+            cookie_id: None,
+            passkey_id: None,
+            user_agent: None,
+            is_untrusted_device: None,
+            anomaly_flags: &[],
+            photo_url: None,
+        },
     )
-    .fetch_one(executor)
-    .await?;
-    Ok(record)
+    .await
+}
+
+pub struct CheckOutUpdateParams<'a> {
+    pub employee_id: Uuid,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub company_id: Uuid,
+    pub outside_geofence: bool,
+    pub offsite_network: bool,
+    pub max_overtime_hours: rust_decimal::Decimal,
+    pub session_id: Option<Uuid>,
+    pub device_id: Option<Uuid>,
+    pub cookie_id: Option<Uuid>,
+    pub user_agent: Option<&'a str>,
+    pub untrusted_device: bool,
+    pub anomaly_flags: &'a [String],
+    pub photo_url: Option<&'a str>,
 }
 
 /// Close the most recent open check-in within 24h (handles overnight shifts), computing
 /// hours worked and overtime against the company's default schedule.
-/// `outside_geofence` ORs into the record's flag so an off-site checkout is
-/// visible even when the check-in was on-site.
-///
-/// `max_overtime_hours` is the company's per-day ceiling, decided by the service
-/// — the repository does not read settings.
 #[allow(clippy::too_many_arguments)]
 pub async fn check_out(
     executor: impl Executor<'_, Database = Postgres>,
@@ -96,6 +176,32 @@ pub async fn check_out(
     offsite_network: bool,
     max_overtime_hours: rust_decimal::Decimal,
 ) -> AppResult<Option<AttendanceRecord>> {
+    check_out_with_context(
+        executor,
+        &CheckOutUpdateParams {
+            employee_id,
+            latitude,
+            longitude,
+            company_id,
+            outside_geofence,
+            offsite_network,
+            max_overtime_hours,
+            session_id: None,
+            device_id: None,
+            cookie_id: None,
+            user_agent: None,
+            untrusted_device: false,
+            anomaly_flags: &[],
+            photo_url: None,
+        },
+    )
+    .await
+}
+
+pub async fn check_out_with_context(
+    executor: impl Executor<'_, Database = Postgres>,
+    params: &CheckOutUpdateParams<'_>,
+) -> AppResult<Option<AttendanceRecord>> {
     let record = sqlx::query_as!(
         AttendanceRecord,
         r#"UPDATE attendance_records ar
@@ -103,24 +209,25 @@ pub async fn check_out(
                checkout_latitude = $2,
                checkout_longitude = $3,
                is_outside_geofence = (COALESCE(ar.is_outside_geofence, FALSE) OR $5),
-               -- Left NULL when the check-in was never evaluated and this
-               -- check-out was not either: "not checked" must stay
-               -- distinguishable from "checked and on-network".
                is_offsite_network = CASE
                    WHEN $6 THEN TRUE
                    ELSE ar.is_offsite_network
                END,
+               check_out_session_id = $8,
+               check_out_device_id = $9,
+               check_out_cookie_id = $10,
+               check_out_user_agent = $11,
+               is_untrusted_device = CASE
+                   WHEN $12 THEN TRUE
+                   ELSE ar.is_untrusted_device
+               END,
+               anomaly_flags = ARRAY(
+                   SELECT DISTINCT f
+                   FROM unnest(ar.anomaly_flags || $13::text[]) AS f
+                   ORDER BY f
+               ),
+               check_out_photo_url = COALESCE($14, ar.check_out_photo_url),
                hours_worked = src.elapsed_hours,
-               -- A forgotten check-out is indistinguishable from a genuine long
-               -- shift at write time, and the 24h match window below means the
-               -- elapsed figure can be most of a day. Above the company's
-               -- per-day ceiling the overtime is left UNRATED (NULL) rather than
-               -- clamped: SUM() in the payroll read skips it so nothing unworked
-               -- is paid, while the record stays visible for an HR correction.
-               -- Clamping would still pay the ceiling and erase the evidence.
-               -- hours_worked stays truthful either way — it is what the clock
-               -- says, and blunting it would hide the anomaly from the
-               -- attendance summary too.
                overtime_hours = CASE
                    WHEN (COALESCE(ar.is_outside_geofence, FALSE) OR $5)
                      OR (COALESCE(ar.is_offsite_network, FALSE) OR $6)
@@ -160,18 +267,177 @@ pub async fn check_out(
                      ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,
                      ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,
                      ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
-                     ar.is_offsite_network, ar.created_at, ar.updated_at"#,
-        employee_id,
-        latitude,
-        longitude,
-        company_id,
-        outside_geofence,
-        offsite_network,
-        max_overtime_hours,
+                     ar.is_offsite_network,
+                     ar.check_in_session_id, ar.check_out_session_id, ar.check_in_device_id, ar.check_out_device_id,
+                     ar.check_in_cookie_id, ar.check_out_cookie_id, ar.check_in_passkey_id,
+                     ar.check_in_user_agent, ar.check_out_user_agent, ar.is_untrusted_device, ar.anomaly_flags,
+                     ar.check_in_photo_url, ar.check_out_photo_url, ar.check_in_photo_purged_at, ar.check_out_photo_purged_at,
+                     ar.created_at, ar.updated_at"#,
+        params.employee_id,
+        params.latitude,
+        params.longitude,
+        params.company_id,
+        params.outside_geofence,
+        params.offsite_network,
+        params.max_overtime_hours,
+        params.session_id,
+        params.device_id,
+        params.cookie_id,
+        params.user_agent,
+        params.untrusted_device,
+        params.anomaly_flags,
+        params.photo_url,
     )
     .fetch_optional(executor)
     .await?;
     Ok(record)
+}
+
+/// Find the employee's most recent open check-in within the last 24 hours (used
+/// before check-out to evaluate device mismatch).
+pub async fn find_latest_open_24h(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<AttendanceRecord>> {
+    let record = sqlx::query_as!(
+        AttendanceRecord,
+        r#"SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                  latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                  created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                  check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,
+                  check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,
+                  check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,
+                  check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,
+                  created_at, updated_at
+           FROM attendance_records
+           WHERE employee_id = $1
+             AND company_id = $2
+             AND check_out_at IS NULL
+             AND check_in_at > NOW() - INTERVAL '24 hours'
+             AND check_in_at <= NOW()
+           ORDER BY check_in_at DESC
+           LIMIT 1"#,
+        employee_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(record)
+}
+
+/// Find records belonging to other employees in the same company that used
+/// `cookie_id` within the last 24 hours (shared-device detection).
+pub async fn find_other_employee_records_by_cookie_24h(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    exclude_employee_id: Uuid,
+    cookie_id: Uuid,
+) -> AppResult<Vec<Uuid>> {
+    let ids = sqlx::query_scalar!(
+        r#"SELECT id
+           FROM attendance_records
+           WHERE company_id = $1
+             AND employee_id <> $2
+             AND (
+                 (check_in_cookie_id = $3 AND check_in_at > NOW() - INTERVAL '24 hours')
+                 OR (check_out_cookie_id = $3 AND check_out_at > NOW() - INTERVAL '24 hours')
+             )"#,
+        company_id,
+        exclude_employee_id,
+        cookie_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(ids)
+}
+
+/// Append a single anomaly flag onto existing record(s) without duplicating.
+pub async fn append_anomaly_flag(
+    executor: impl Executor<'_, Database = Postgres>,
+    record_ids: &[Uuid],
+    flag: &str,
+) -> AppResult<()> {
+    if record_ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query!(
+        r#"UPDATE attendance_records
+           SET anomaly_flags = CASE
+                   WHEN $2 = ANY(anomaly_flags) THEN anomaly_flags
+                   ELSE array_append(anomaly_flags, $2)
+               END,
+               updated_at = NOW()
+           WHERE id = ANY($1)"#,
+        record_ids,
+        flag,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Clear expired check-in / check-out attendance photos per each company's
+/// `attendance_photo_retention_days` policy, remove matching `uploaded_files`
+/// ownership rows, and return stored file names to unlink from disk.
+pub async fn purge_expired_photos(
+    executor: impl Executor<'_, Database = Postgres>,
+) -> AppResult<Vec<String>> {
+    let names = sqlx::query_scalar!(
+        r#"WITH expired_in AS (
+               SELECT ar.id, substring(ar.check_in_photo_url FROM 14) AS stored_name
+               FROM attendance_records ar
+               JOIN companies c ON c.id = ar.company_id
+               WHERE ar.check_in_photo_url IS NOT NULL
+                 AND ar.check_in_at < NOW() - make_interval(days => c.attendance_photo_retention_days)
+           ),
+           expired_out AS (
+               SELECT ar.id, substring(ar.check_out_photo_url FROM 14) AS stored_name
+               FROM attendance_records ar
+               JOIN companies c ON c.id = ar.company_id
+               WHERE ar.check_out_photo_url IS NOT NULL
+                 AND COALESCE(ar.check_out_at, ar.check_in_at) < NOW() - make_interval(days => c.attendance_photo_retention_days)
+           ),
+           updated AS (
+               UPDATE attendance_records ar
+               SET check_in_photo_url = CASE
+                       WHEN ar.id IN (SELECT id FROM expired_in) THEN NULL
+                       ELSE ar.check_in_photo_url
+                   END,
+                   check_in_photo_purged_at = CASE
+                       WHEN ar.id IN (SELECT id FROM expired_in) THEN NOW()
+                       ELSE ar.check_in_photo_purged_at
+                   END,
+                   check_out_photo_url = CASE
+                       WHEN ar.id IN (SELECT id FROM expired_out) THEN NULL
+                       ELSE ar.check_out_photo_url
+                   END,
+                   check_out_photo_purged_at = CASE
+                       WHEN ar.id IN (SELECT id FROM expired_out) THEN NOW()
+                       ELSE ar.check_out_photo_purged_at
+                   END,
+                   updated_at = NOW()
+               WHERE ar.id IN (SELECT id FROM expired_in UNION SELECT id FROM expired_out)
+               RETURNING ar.id
+           ),
+           to_remove AS (
+               SELECT stored_name FROM expired_in WHERE stored_name IS NOT NULL
+               UNION
+               SELECT stored_name FROM expired_out WHERE stored_name IS NOT NULL
+           ),
+           deleted_uploads AS (
+               DELETE FROM uploaded_files uf
+               WHERE uf.stored_name IN (SELECT stored_name FROM to_remove)
+               RETURNING uf.stored_name
+           )
+           SELECT stored_name AS "stored_name!"
+           FROM to_remove
+           WHERE EXISTS (SELECT 1 FROM updated LIMIT 1)
+              OR EXISTS (SELECT 1 FROM deleted_uploads LIMIT 1)"#,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(names)
 }
 
 /// Whether the employee has an open check-in for the current local day in `tz`.
@@ -186,7 +452,12 @@ pub async fn find_open_with_local_date(
         r#"SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
                   latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                   created_by, hours_worked, overtime_hours, is_outside_geofence,
-                  is_offsite_network, created_at, updated_at,
+                  is_offsite_network,
+                  check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,
+                  check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,
+                  check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,
+                  check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,
+                  created_at, updated_at,
                   DATE(check_in_at AT TIME ZONE $2) AS "local_date!",
                   (DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)) AS "is_today!"
            FROM attendance_records
@@ -219,6 +490,21 @@ pub async fn find_open_with_local_date(
                 overtime_hours: r.overtime_hours,
                 is_outside_geofence: r.is_outside_geofence,
                 is_offsite_network: r.is_offsite_network,
+                check_in_session_id: r.check_in_session_id,
+                check_out_session_id: r.check_out_session_id,
+                check_in_device_id: r.check_in_device_id,
+                check_out_device_id: r.check_out_device_id,
+                check_in_cookie_id: r.check_in_cookie_id,
+                check_out_cookie_id: r.check_out_cookie_id,
+                check_in_passkey_id: r.check_in_passkey_id,
+                check_in_user_agent: r.check_in_user_agent,
+                check_out_user_agent: r.check_out_user_agent,
+                is_untrusted_device: r.is_untrusted_device,
+                anomaly_flags: r.anomaly_flags,
+                check_in_photo_url: r.check_in_photo_url,
+                check_out_photo_url: r.check_out_photo_url,
+                check_in_photo_purged_at: r.check_in_photo_purged_at,
+                check_out_photo_purged_at: r.check_out_photo_purged_at,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
             },
@@ -259,6 +545,10 @@ pub async fn get_today(
         "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
                 latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                 created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,
+                check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,
+                check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,
+                check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,
                 created_at, updated_at
          FROM attendance_records
          WHERE employee_id = $1
@@ -284,6 +574,10 @@ pub async fn get_by_id(
         "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
                 latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                 created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,
+                check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,
+                check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,
+                check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,
                 created_at, updated_at
          FROM attendance_records WHERE id = $1 AND company_id = $2",
         record_id,
@@ -304,6 +598,10 @@ pub async fn get_by_id_locked(
         "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
                 latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                 created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,
+                check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,
+                check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,
+                check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,
                 created_at, updated_at
          FROM attendance_records WHERE id = $1 AND company_id = $2
          FOR UPDATE",
@@ -357,6 +655,10 @@ pub async fn insert_manual(
            RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
                      latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                      created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                     check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,
+                     check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,
+                     check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,
+                     check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,
                 created_at, updated_at"#,
         company_id,
         employee_id,
@@ -415,6 +717,10 @@ pub async fn update(
            RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at, ar.method, ar.status,
                      ar.latitude, ar.longitude, ar.checkout_latitude, ar.checkout_longitude, ar.notes, ar.qr_token_id,
                      ar.created_by, ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence, ar.is_offsite_network,
+                     ar.check_in_session_id, ar.check_out_session_id, ar.check_in_device_id, ar.check_out_device_id,
+                     ar.check_in_cookie_id, ar.check_out_cookie_id, ar.check_in_passkey_id,
+                     ar.check_in_user_agent, ar.check_out_user_agent, ar.is_untrusted_device, ar.anomaly_flags,
+                     ar.check_in_photo_url, ar.check_out_photo_url, ar.check_in_photo_purged_at, ar.check_out_photo_purged_at,
                      ar.created_at, ar.updated_at"#,
         record_id,
         company_id,

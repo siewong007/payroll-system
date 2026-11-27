@@ -64,7 +64,7 @@ export function SettingsNav({
                   className={`relative flex items-center gap-2.5 min-h-11 lg:min-h-10 lg:w-full shrink-0 px-3 py-2 rounded-xl text-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all-fast ${
                     isActive
                       ? 'text-gray-900 dark:text-slate-100 font-medium'
-                      : 'text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-black/[0.03] dark:hover:bg-white/[0.05]'
+                      : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)]'
                   }`}
                 >
                   {isActive && (

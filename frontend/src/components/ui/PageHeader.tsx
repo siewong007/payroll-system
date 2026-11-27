@@ -21,25 +21,25 @@ export function PageHeader({
   subtitle,
   breadcrumbs,
   actions,
-  className = 'mb-6',
+  className = 'mb-4 sm:mb-5',
 }: PageHeaderProps) {
   const { t } = useTranslation();
   return (
     <div className={className}>
       {breadcrumbs && breadcrumbs.length > 0 && (
-        <nav aria-label={t('ux.commandPalette.groupPages')} className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+        <nav aria-label={t('ux.commandPalette.groupPages')} className="mb-1.5 flex flex-wrap items-center gap-1 text-xs text-[var(--muted-foreground)]">
           {breadcrumbs.map((crumb, index) => (
-            <span key={`${crumb.label}-${index}`} className="inline-flex items-center gap-1.5">
-              {index > 0 && <ChevronRight className="h-3.5 w-3.5 text-gray-400" aria-hidden="true" />}
+            <span key={`${crumb.label}-${index}`} className="inline-flex items-center gap-1">
+              {index > 0 && <ChevronRight className="h-3.5 w-3.5 text-[var(--subtle-foreground)]" aria-hidden="true" />}
               {crumb.href ? (
                 <Link
                   to={crumb.href}
-                  className="font-medium text-gray-500 transition-colors hover:text-[var(--accent-1)] dark:text-slate-400"
+                  className="font-medium text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
                 >
                   {crumb.label}
                 </Link>
               ) : (
-                <span className="font-semibold text-gray-800 dark:text-slate-200">{crumb.label}</span>
+                <span className="font-medium text-[var(--foreground)]">{crumb.label}</span>
               )}
             </span>
           ))}
@@ -47,11 +47,9 @@ export function PageHeader({
       )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight text-gray-900 dark:text-slate-100 sm:text-2xl">
-            {title}
-          </h1>
+          <h1 className="page-title">{title}</h1>
           {subtitle && (
-            <div className="mt-1 text-sm text-gray-500 dark:text-slate-400">{subtitle}</div>
+            <div className="page-subtitle">{subtitle}</div>
           )}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}

@@ -29,14 +29,14 @@ export function ChangePassword() {
         <div
           role="status"
           aria-label={t('common.loading')}
-          className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow-lg p-6 sm:p-8 space-y-5"
+          className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm p-6 sm:p-7 space-y-5"
         >
-          <BrandLogo variant="lockup-dark" priority className="h-10 w-auto mx-auto rounded-xl" />
+          <BrandLogo variant="lockup-auto" priority className="h-10 w-auto mx-auto rounded-lg" />
           <div className="space-y-3 py-2">
             <Skeleton className="h-4 w-44 mx-auto" />
-            <Skeleton className="h-10 w-full rounded-xl" />
-            <Skeleton className="h-10 w-full rounded-xl" />
-            <Skeleton className="h-10 w-full rounded-xl" />
+            <Skeleton className="h-10 w-full rounded-lg" />
+            <Skeleton className="h-10 w-full rounded-lg" />
+            <Skeleton className="h-10 w-full rounded-lg" />
           </div>
         </div>
       </AuthLayout>
@@ -97,7 +97,7 @@ export function ChangePassword() {
           <button
             type="button"
             onClick={() => void handleSignOut()}
-            className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-medium text-gray-700 dark:text-slate-200 hover:bg-gray-200/70 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
+            className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-4 text-sm font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
           >
             <LogOut className="w-4 h-4" aria-hidden="true" />
             {t('nav.signOut')}
@@ -105,25 +105,25 @@ export function ChangePassword() {
         </div>
       }
     >
-      <div className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow-lg p-6 sm:p-8">
+      <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm p-6 sm:p-7">
         <div className="text-center mb-6">
-          <BrandLogo variant="lockup-dark" priority className="h-10 w-auto mx-auto mb-4 rounded-xl" />
-          <div className="w-12 h-12 bg-amber-100 dark:bg-amber-500/15 rounded-full flex items-center justify-center mx-auto mb-3">
-            <svg className="w-6 h-6 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <BrandLogo variant="lockup-auto" priority className="h-10 w-auto mx-auto mb-3 rounded-lg" />
+          <div className="w-11 h-11 bg-amber-50 dark:bg-amber-500/15 border border-amber-200 dark:border-amber-500/30 rounded-lg flex items-center justify-center mx-auto mb-3">
+            <svg className="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
           </div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">{t('auth.change.title')}</h1>
-          <p className="text-sm text-gray-600 dark:text-slate-300 mt-1">
+          <h1 className="text-xl font-semibold text-[var(--foreground)]">{t('auth.change.title')}</h1>
+          <p className="text-sm text-[var(--muted-foreground)] mt-1">
             {t('auth.change.body')}
           </p>
-          <p className="text-xs text-gray-600 dark:text-slate-300 mt-2">
+          <p className="text-xs text-[var(--muted-foreground)] mt-2">
             {passwordPolicyHint()}
           </p>
         </div>
 
         {error && (
-          <div role="alert" className="p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/30 mb-4">
+          <div role="alert" className="p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-200 dark:border-red-500/30 mb-4">
             {error}
           </div>
         )}

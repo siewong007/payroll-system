@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT 'claim'::text AS \"kind!\", employee_id AS \"employee_id?\", FALSE AS \"is_confidential!\"\n           FROM claims\n           WHERE company_id = $1 AND receipt_url = $2\n        UNION ALL\n        SELECT 'leave_request'::text, employee_id, FALSE\n           FROM leave_requests\n           WHERE company_id = $1 AND attachment_url = $2\n        UNION ALL\n        SELECT 'document'::text, employee_id, COALESCE(is_confidential, FALSE)\n           FROM documents\n           WHERE company_id = $1 AND file_url = $2 AND deleted_at IS NULL\n        UNION ALL\n        SELECT 'company_logo'::text, NULL::uuid, FALSE\n           FROM companies\n           WHERE id = $1 AND logo_url = $2\n        UNION ALL\n        SELECT 'attendance_photo'::text, employee_id, FALSE\n           FROM attendance_records\n           WHERE company_id = $1\n             AND (check_in_photo_url = $2 OR check_out_photo_url = $2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id?",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "is_confidential!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "4188b608aa3d03b316fb37ba2bc6a80db215fadaf6797b5c4a8e1a9da42cd81a"
+}

@@ -1,10 +1,18 @@
+use aws_lc_rs::hmac;
 use axum::http::{HeaderMap, header};
+use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 
 const REFRESH_COOKIE_NAME: &str = "refresh_token";
 const SECURE_REFRESH_COOKIE_NAME: &str = "__Secure-refresh_token";
 const REFRESH_COOKIE_MAX_AGE: i64 = 30 * 24 * 60 * 60; // 30 days in seconds
+
+const ATT_DEVICE_COOKIE_NAME: &str = "att_device";
+const SECURE_ATT_DEVICE_COOKIE_NAME: &str = "__Secure-att_device";
+const ATT_DEVICE_COOKIE_MAX_AGE: i64 = 365 * 24 * 60 * 60; // 1 year
+const ATT_DEVICE_COOKIE_PATH: &str = "/api/attendance";
+const ATT_DEVICE_HMAC_DOMAIN: &[u8] = b"attendance-device-cookie:";
 
 /// Browser-held secret that binds an OAuth2 `state` to the tab that started the
 /// flow. Only its sha256 travels in the authorization URL.
@@ -245,4 +253,159 @@ pub fn validate_cookie_csrf_origin(headers: &HeaderMap, frontend_url: &str) -> A
     }
 
     Ok(())
+}
+
+fn att_device_cookie_name(frontend_url: &str) -> &'static str {
+    if is_https_frontend(frontend_url) {
+        SECURE_ATT_DEVICE_COOKIE_NAME
+    } else {
+        ATT_DEVICE_COOKIE_NAME
+    }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{:02x}", b);
+    }
+    out
+}
+
+fn hex_decode(raw: &str) -> Option<Vec<u8>> {
+    if !raw.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(raw.len() / 2);
+    let bytes = raw.as_bytes();
+    for chunk in bytes.as_chunks::<2>().0 {
+        let hi = (chunk[0] as char).to_digit(16)?;
+        let lo = (chunk[1] as char).to_digit(16)?;
+        out.push(((hi << 4) | lo) as u8);
+    }
+    Some(out)
+}
+
+fn att_device_hmac_payload(device_id: Uuid) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(ATT_DEVICE_HMAC_DOMAIN.len() + 16);
+    msg.extend_from_slice(ATT_DEVICE_HMAC_DOMAIN);
+    msg.extend_from_slice(device_id.as_bytes());
+    msg
+}
+
+fn sign_att_device_id(device_id: Uuid, jwt_secret: &str) -> String {
+    let key = hmac::Key::new(hmac::HMAC_SHA256, jwt_secret.as_bytes());
+    let payload = att_device_hmac_payload(device_id);
+    let tag = hmac::sign(&key, &payload);
+    format!("{device_id}.{}", hex_encode(tag.as_ref()))
+}
+
+fn verify_att_device_cookie(raw: &str, jwt_secret: &str) -> Option<Uuid> {
+    let (id_str, sig_hex) = raw.split_once('.')?;
+    let device_id = Uuid::parse_str(id_str).ok()?;
+    let sig_bytes = hex_decode(sig_hex)?;
+    let key = hmac::Key::new(hmac::HMAC_SHA256, jwt_secret.as_bytes());
+    let payload = att_device_hmac_payload(device_id);
+    hmac::verify(&key, &payload, &sig_bytes).ok()?;
+    Some(device_id)
+}
+
+/// Extract a persistent signed browser device identifier cookie (`att_device` /
+/// `__Secure-att_device`), or mint a new one if missing or invalid.
+///
+/// Intentionally NOT cleared on `/auth/logout` so repeated logins across
+/// different accounts in the same browser remain linked for shared-device
+/// buddy-punching detection.
+pub fn extract_or_mint_attendance_device_cookie(
+    headers: &HeaderMap,
+    jwt_secret: &str,
+    frontend_url: &str,
+) -> (Uuid, Option<(header::HeaderName, String)>) {
+    let existing = if is_https_frontend(frontend_url) {
+        cookie_value(headers, SECURE_ATT_DEVICE_COOKIE_NAME)
+    } else {
+        cookie_value(headers, SECURE_ATT_DEVICE_COOKIE_NAME)
+            .or_else(|| cookie_value(headers, ATT_DEVICE_COOKIE_NAME))
+    };
+
+    if let Some(raw) = existing
+        && let Some(device_id) = verify_att_device_cookie(&raw, jwt_secret)
+    {
+        return (device_id, None);
+    }
+
+    let device_id = Uuid::new_v4();
+    let signed = sign_att_device_id(device_id, jwt_secret);
+    let header_value = format!(
+        "{}={}; HttpOnly; SameSite=Lax; Path={}; Max-Age={}{}",
+        att_device_cookie_name(frontend_url),
+        signed,
+        ATT_DEVICE_COOKIE_PATH,
+        ATT_DEVICE_COOKIE_MAX_AGE,
+        secure_flag(frontend_url),
+    );
+    (device_id, Some((header::SET_COOKIE, header_value)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attendance_device_cookie_round_trips_and_rejects_tampering() {
+        let secret = "test-secret-key-for-attendance-cookie";
+        let headers = HeaderMap::new();
+        let (minted_id, set_cookie) =
+            extract_or_mint_attendance_device_cookie(&headers, secret, "http://localhost:5173");
+        let (hdr_name, hdr_val) = set_cookie.expect("new cookie should be minted");
+        assert_eq!(hdr_name, header::SET_COOKIE);
+        assert!(hdr_val.starts_with("att_device="));
+        assert!(hdr_val.contains("HttpOnly"));
+        assert!(hdr_val.contains("Path=/api/attendance"));
+        assert!(!hdr_val.contains("; Secure"));
+
+        let raw_pair = hdr_val.split(';').next().unwrap();
+        let mut req_headers = HeaderMap::new();
+        req_headers.insert(header::COOKIE, raw_pair.parse().unwrap());
+
+        let (verified_id, second_set) =
+            extract_or_mint_attendance_device_cookie(&req_headers, secret, "http://localhost:5173");
+        assert_eq!(verified_id, minted_id);
+        assert!(second_set.is_none());
+
+        // Tampering with either UUID or signature must mint a new ID
+        let tampered = format!("{}.{}", Uuid::new_v4(), "00".repeat(32));
+        let mut bad_headers = HeaderMap::new();
+        bad_headers.insert(
+            header::COOKIE,
+            format!("att_device={tampered}").parse().unwrap(),
+        );
+        let (re_minted_id, re_set) =
+            extract_or_mint_attendance_device_cookie(&bad_headers, secret, "http://localhost:5173");
+        assert_ne!(re_minted_id, minted_id);
+        assert!(re_set.is_some());
+    }
+
+    #[test]
+    fn attendance_device_cookie_uses_secure_prefix_on_https() {
+        let secret = "test-secret-key-for-attendance-cookie";
+        let headers = HeaderMap::new();
+        let (minted_id, set_cookie) =
+            extract_or_mint_attendance_device_cookie(&headers, secret, "https://app.example.com");
+        let (_, hdr_val) = set_cookie.expect("secure cookie should be minted");
+        assert!(hdr_val.starts_with("__Secure-att_device="));
+        assert!(hdr_val.contains("; Secure"));
+
+        // Unprefixed att_device must be ignored on HTTPS
+        let unprefixed = format!("att_device={}", sign_att_device_id(minted_id, secret));
+        let mut unprefixed_headers = HeaderMap::new();
+        unprefixed_headers.insert(header::COOKIE, unprefixed.parse().unwrap());
+        let (new_id, re_set) = extract_or_mint_attendance_device_cookie(
+            &unprefixed_headers,
+            secret,
+            "https://app.example.com",
+        );
+        assert_ne!(new_id, minted_id);
+        assert!(re_set.is_some());
+    }
 }

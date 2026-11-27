@@ -6,8 +6,12 @@ import type {
 } from '@/lib/webauthn';
 import type { StepUpCredentials } from '@/types';
 
+export type AttendanceMethod = 'qr_code' | 'face_id' | 'qr_and_face_id';
+export type DeviceBindingMode = 'none' | 'warn' | 'enforce';
+export type PhotoCaptureMode = 'none' | 'optional' | 'required';
+
 export interface AttendanceMethodResponse {
-  method: 'qr_code' | 'face_id';
+  method: AttendanceMethod;
   allow_company_override: boolean;
   is_company_override: boolean;
   /** When 'none', clients should not block on a GPS fix — the server ignores coordinates */
@@ -19,6 +23,10 @@ export interface AttendanceMethodResponse {
    * is only ever used to *explain* the requirement, never to pre-check it.
    */
   network_mode: 'none' | 'learn' | 'warn' | 'enforce';
+  device_mode: DeviceBindingMode;
+  device_auto_approve_first: boolean;
+  photo_mode: PhotoCaptureMode;
+  photo_retention_days: number;
   /** IANA timezone the company's attendance days are bucketed in */
   timezone: string;
   /** Advisory default shift start time (`HH:MM:SS`) */
@@ -35,13 +43,24 @@ export interface QrTokenResponse {
   ttl_seconds: number;
 }
 
+export interface DeviceProofRequest {
+  device_id: string;
+  challenge_id: string;
+  signature: string;
+}
+
+export interface AttendanceCheckOptions {
+  device_proof?: DeviceProofRequest;
+  photo_base64?: string;
+}
+
 export interface AttendanceRecord {
   id: string;
   company_id: string;
   employee_id: string;
   check_in_at: string;
   check_out_at: string | null;
-  method: 'qr_code' | 'face_id' | 'manual';
+  method: 'qr_code' | 'face_id' | 'qr_and_face_id' | 'kiosk_photo' | 'manual';
   status: 'present' | 'late' | 'absent' | 'half_day';
   latitude: number | null;
   longitude: number | null;
@@ -56,6 +75,16 @@ export interface AttendanceRecord {
   is_outside_geofence: boolean | null;
   /** Null means the network was never evaluated — mode was off or only learning. */
   is_offsite_network: boolean | null;
+  check_in_device_id?: string | null;
+  check_out_device_id?: string | null;
+  check_in_user_agent?: string | null;
+  check_out_user_agent?: string | null;
+  is_untrusted_device?: boolean | null;
+  anomaly_flags: string[];
+  check_in_photo_url?: string | null;
+  check_out_photo_url?: string | null;
+  check_in_photo_purged_at?: string | null;
+  check_out_photo_purged_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +94,9 @@ export interface AttendanceRecordWithEmployee
   employee_number: string;
   full_name: string;
   department: string | null;
+  check_in_device_label: string | null;
+  check_out_device_label: string | null;
+  check_in_passkey_id?: string | null;
 }
 
 export interface AttendanceListQuery {
@@ -79,6 +111,8 @@ export interface AttendanceListQuery {
   outside_geofence_only?: boolean;
   /** Only check-ins recorded off the approved networks — same triage need */
   offsite_network_only?: boolean;
+  /** Only records carrying one or more anomaly flags */
+  flagged_only?: boolean;
   page?: number;
   per_page?: number;
 }
@@ -123,8 +157,26 @@ export function generateQrToken(): Promise<QrTokenResponse> {
 
 // ─── Check In / Out ───
 
-export function checkInQr(token: string, latitude?: number, longitude?: number): Promise<AttendanceRecord> {
-  return api.post('/attendance/check-in/qr', { token, latitude, longitude }).then(r => r.data);
+function withAttendanceOptions<T extends Record<string, unknown>>(
+  base: T,
+  options?: AttendanceCheckOptions,
+): T & AttendanceCheckOptions {
+  if (!options) return base;
+  const body: T & AttendanceCheckOptions = { ...base };
+  if (options.device_proof) body.device_proof = options.device_proof;
+  if (options.photo_base64) body.photo_base64 = options.photo_base64;
+  return body;
+}
+
+export function checkInQr(
+  token: string,
+  latitude?: number,
+  longitude?: number,
+  options?: AttendanceCheckOptions,
+): Promise<AttendanceRecord> {
+  return api
+    .post('/attendance/check-in/qr', withAttendanceOptions({ token, latitude, longitude }, options))
+    .then(r => r.data);
 }
 
 export interface FaceIdBeginResponse {
@@ -145,15 +197,41 @@ export function checkInFaceId(
   challenge_id: string,
   credential: AuthenticationResponseJSON,
   latitude?: number,
-  longitude?: number
+  longitude?: number,
+  options?: AttendanceCheckOptions,
 ): Promise<AttendanceRecord> {
   return api
-    .post('/attendance/check-in/face-id', { challenge_id, credential, latitude, longitude })
+    .post(
+      '/attendance/check-in/face-id',
+      withAttendanceOptions({ challenge_id, credential, latitude, longitude }, options),
+    )
     .then(r => r.data);
 }
 
-export function checkOut(latitude?: number, longitude?: number): Promise<AttendanceRecord> {
-  return api.post('/attendance/check-out', { latitude, longitude }).then(r => r.data);
+export function checkInQrFaceId(
+  token: string,
+  challenge_id: string,
+  credential: AuthenticationResponseJSON,
+  latitude?: number,
+  longitude?: number,
+  options?: AttendanceCheckOptions,
+): Promise<AttendanceRecord> {
+  return api
+    .post(
+      '/attendance/check-in/qr-face-id',
+      withAttendanceOptions({ token, challenge_id, credential, latitude, longitude }, options),
+    )
+    .then(r => r.data);
+}
+
+export function checkOut(
+  latitude?: number,
+  longitude?: number,
+  options?: AttendanceCheckOptions,
+): Promise<AttendanceRecord> {
+  return api
+    .post('/attendance/check-out', withAttendanceOptions({ latitude, longitude }, options))
+    .then(r => r.data);
 }
 
 // ─── Portal ───
@@ -241,10 +319,173 @@ export async function downloadAttendanceCsv(params: {
   open_only?: boolean;
   outside_geofence_only?: boolean;
   offsite_network_only?: boolean;
+  flagged_only?: boolean;
 }): Promise<void> {
   const response = await api.get('/attendance/export', {
     params,
     responseType: 'blob',
   });
   triggerBlobDownload(response.data, 'attendance.csv', 'text/csv');
+}
+
+// ─── Bound Devices, Security Settings, Anomalies, Personal Kiosk QR ───
+
+export type DeviceChallengePurpose = 'check_in' | 'check_out' | 'personal_qr';
+
+export interface DeviceChallengeResponse {
+  challenge_id: string;
+  nonce: string;
+  expires_at: string;
+}
+
+export interface EmployeeAttendanceDevice {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  user_id: string;
+  public_key_raw: string;
+  public_key_fingerprint: string;
+  device_label: string;
+  user_agent: string | null;
+  cookie_device_id: string | null;
+  status: 'pending' | 'approved' | 'revoked';
+  approved_by: string | null;
+  approved_at: string | null;
+  revoked_by: string | null;
+  revoked_at: string | null;
+  revoke_reason: string | null;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface EmployeeAttendanceDeviceWithEmployee {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  employee_number: string;
+  full_name: string;
+  department: string | null;
+  device_label: string;
+  public_key_fingerprint: string;
+  user_agent: string | null;
+  status: 'pending' | 'approved' | 'revoked';
+  approved_by: string | null;
+  approved_at: string | null;
+  revoked_by: string | null;
+  revoked_at: string | null;
+  revoke_reason: string | null;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface AttendanceSecuritySettings {
+  device_mode: DeviceBindingMode;
+  device_auto_approve_first: boolean;
+  photo_mode: PhotoCaptureMode;
+  photo_retention_days: number;
+}
+
+export interface SharedDeviceEmployeeEntry {
+  employee_id: string;
+  employee_number: string;
+  full_name: string;
+  check_in_at: string;
+}
+
+export interface SharedDeviceEvent {
+  local_date: string;
+  device_tag: string;
+  employee_count: number;
+  employees: SharedDeviceEmployeeEntry[];
+}
+
+export interface PairedCheckInCluster {
+  employee_a_id: string;
+  employee_a_number: string;
+  employee_a_name: string;
+  employee_b_id: string;
+  employee_b_number: string;
+  employee_b_name: string;
+  paired_days: number;
+  paired_checkout_days: number;
+  co_located_days: number;
+  avg_gap_seconds: number;
+  last_paired_date: string;
+}
+
+export interface AttendanceAnomaliesReport {
+  date_from: string;
+  date_to: string;
+  summary: {
+    flagged_records: number;
+    shared_device_incidents: number;
+    paired_clusters: number;
+    pending_devices: number;
+  };
+  shared_device_events: SharedDeviceEvent[];
+  paired_checkins: PairedCheckInCluster[];
+}
+
+export interface PersonalQrResponse {
+  token: string;
+  qr_payload: string;
+  action: 'check_in' | 'check_out' | string;
+  expires_at: string;
+  ttl_seconds: number;
+}
+
+export function issueDeviceChallenge(purpose: DeviceChallengePurpose): Promise<DeviceChallengeResponse> {
+  return api.post('/attendance/devices/challenge', { purpose }).then(r => r.data);
+}
+
+export function enrollAttendanceDevice(data: {
+  public_key_raw: string;
+  device_label?: string;
+}): Promise<EmployeeAttendanceDevice> {
+  return api.post('/attendance/devices/enroll', data).then(r => r.data);
+}
+
+export function getMyAttendanceDevices(): Promise<EmployeeAttendanceDevice[]> {
+  return api.get('/attendance/devices/my').then(r => r.data);
+}
+
+export function listCompanyAttendanceDevices(
+  status?: 'pending' | 'approved' | 'revoked',
+): Promise<EmployeeAttendanceDeviceWithEmployee[]> {
+  return api.get('/attendance/devices', { params: status ? { status } : undefined }).then(r => r.data);
+}
+
+export function approveAttendanceDevice(id: string): Promise<EmployeeAttendanceDevice> {
+  return api.post(`/attendance/devices/${id}/approve`).then(r => r.data);
+}
+
+export function revokeAttendanceDevice(
+  id: string,
+  reason?: string,
+): Promise<EmployeeAttendanceDevice> {
+  return api.post(`/attendance/devices/${id}/revoke`, { reason }).then(r => r.data);
+}
+
+export function getAttendanceSecuritySettings(): Promise<AttendanceSecuritySettings> {
+  return api.get('/attendance/security-settings').then(r => r.data);
+}
+
+export function updateAttendanceSecuritySettings(
+  data: Partial<AttendanceSecuritySettings>,
+): Promise<AttendanceSecuritySettings> {
+  return api.put('/attendance/security-settings', data).then(r => r.data);
+}
+
+export function getAttendanceAnomalies(params?: {
+  date_from?: string;
+  date_to?: string;
+}): Promise<AttendanceAnomaliesReport> {
+  return api.get('/attendance/anomalies', { params }).then(r => r.data);
+}
+
+export function createPersonalQr(data?: {
+  action?: 'check_in' | 'check_out';
+  device_proof?: DeviceProofRequest;
+}): Promise<PersonalQrResponse> {
+  return api.post('/attendance/personal-qr', data ?? {}).then(r => r.data);
 }

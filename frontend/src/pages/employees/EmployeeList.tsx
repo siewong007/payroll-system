@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { lazy, Suspense, useState, useMemo, useEffect } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Pencil, Trash2, AlertTriangle, Upload, X, Users } from 'lucide-react';
@@ -13,7 +13,9 @@ import type { Employee } from '@/types';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
-import { EmployeeProfile } from './EmployeeProfileDrawer';
+const EmployeeProfile = lazy(() =>
+  import('./EmployeeProfileDrawer').then((m) => ({ default: m.EmployeeProfile }))
+);
 import { EmployeeFormModal } from './EmployeeFormModal';
 
 const getColumns = (t: (key: string) => string): Column<Employee>[] => [
@@ -248,7 +250,11 @@ export function EmployeeList() {
               ) : undefined
             }
             summaryTitle={(emp) => emp.full_name}
-            renderSummary={(emp) => <EmployeeProfile employeeId={emp.id} />}
+            renderSummary={(emp) => (
+              <Suspense fallback={null}>
+                <EmployeeProfile employeeId={emp.id} />
+              </Suspense>
+            )}
             renderSummaryFooter={
               canManageEmployees
                 ? (emp, close) => (

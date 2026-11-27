@@ -1,0 +1,449 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE attendance_records ar\n           SET check_out_at = NOW(),\n               checkout_latitude = $2,\n               checkout_longitude = $3,\n               is_outside_geofence = (COALESCE(ar.is_outside_geofence, FALSE) OR $5),\n               is_offsite_network = CASE\n                   WHEN $6 THEN TRUE\n                   ELSE ar.is_offsite_network\n               END,\n               check_out_session_id = $8,\n               check_out_device_id = $9,\n               check_out_cookie_id = $10,\n               check_out_user_agent = $11,\n               is_untrusted_device = CASE\n                   WHEN $12 THEN TRUE\n                   ELSE ar.is_untrusted_device\n               END,\n               anomaly_flags = ARRAY(\n                   SELECT DISTINCT f\n                   FROM unnest(ar.anomaly_flags || $13::text[]) AS f\n                   ORDER BY f\n               ),\n               check_out_photo_url = COALESCE($14, ar.check_out_photo_url),\n               hours_worked = src.elapsed_hours,\n               overtime_hours = CASE\n                   WHEN (COALESCE(ar.is_outside_geofence, FALSE) OR $5)\n                     OR (COALESCE(ar.is_offsite_network, FALSE) OR $6)\n                     OR src.overtime_hours > $7 THEN NULL\n                   ELSE src.overtime_hours\n               END,\n               updated_at = NOW()\n           FROM (\n               SELECT open_record.id,\n                      open_record.elapsed_hours,\n                      GREATEST(0,\n                          GREATEST(0, open_record.elapsed_hours - COALESCE(sched.break_hours, 0))\n                          - GREATEST(0, COALESCE(sched.shift_span_hours, 9) - COALESCE(sched.break_hours, 0))\n                      ) AS overtime_hours\n               FROM (\n                   SELECT id, company_id,\n                          ROUND(EXTRACT(EPOCH FROM (NOW() - check_in_at)) / 3600.0, 2) AS elapsed_hours\n                   FROM attendance_records\n                   WHERE employee_id = $1\n                     AND company_id = $4\n                     AND check_out_at IS NULL\n                     AND check_in_at > NOW() - INTERVAL '24 hours'\n                     AND check_in_at <= NOW()\n                   ORDER BY check_in_at DESC\n                   LIMIT 1\n               ) open_record\n               LEFT JOIN LATERAL (\n                   SELECT ws.unpaid_break_minutes / 60.0 AS break_hours,\n                          MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0 AS shift_span_hours\n                   FROM company_work_schedules ws\n                   WHERE ws.company_id = open_record.company_id AND ws.is_default = TRUE\n                   LIMIT 1\n               ) sched ON TRUE\n           ) src\n           WHERE ar.id = src.id AND ar.check_out_at IS NULL\n           RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at,\n                     ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,\n                     ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,\n                     ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,\n                     ar.is_offsite_network,\n                     ar.check_in_session_id, ar.check_out_session_id, ar.check_in_device_id, ar.check_out_device_id,\n                     ar.check_in_cookie_id, ar.check_out_cookie_id, ar.check_in_passkey_id,\n                     ar.check_in_user_agent, ar.check_out_user_agent, ar.is_untrusted_device, ar.anomaly_flags,\n                     ar.check_in_photo_url, ar.check_out_photo_url, ar.check_in_photo_purged_at, ar.check_out_photo_purged_at,\n                     ar.created_at, ar.updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "check_in_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "check_out_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "method",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "method"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "latitude",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "latitude"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "longitude",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "longitude"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "checkout_latitude",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "checkout_latitude"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "checkout_longitude",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "checkout_longitude"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "notes",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "notes"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "qr_token_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "qr_token_id"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "hours_worked",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "hours_worked"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "overtime_hours",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "overtime_hours"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "is_outside_geofence",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "is_outside_geofence"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "is_offsite_network",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "is_offsite_network"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "check_in_session_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "check_out_session_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "check_in_device_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_device_id"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "check_out_device_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_device_id"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "check_in_cookie_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_cookie_id"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "check_out_cookie_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_cookie_id"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "check_in_passkey_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_passkey_id"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "check_in_user_agent",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_user_agent"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "check_out_user_agent",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_user_agent"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "is_untrusted_device",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "is_untrusted_device"
+          }
+        }
+      },
+      {
+        "ordinal": 28,
+        "name": "anomaly_flags",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "anomaly_flags"
+          }
+        }
+      },
+      {
+        "ordinal": 29,
+        "name": "check_in_photo_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_photo_url"
+          }
+        }
+      },
+      {
+        "ordinal": 30,
+        "name": "check_out_photo_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_photo_url"
+          }
+        }
+      },
+      {
+        "ordinal": 31,
+        "name": "check_in_photo_purged_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_photo_purged_at"
+          }
+        }
+      },
+      {
+        "ordinal": 32,
+        "name": "check_out_photo_purged_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_photo_purged_at"
+          }
+        }
+      },
+      {
+        "ordinal": 33,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 34,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Float8",
+        "Float8",
+        "Uuid",
+        "Bool",
+        "Bool",
+        "Numeric",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Bool",
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a3a6a6a757d64699b3875c70238847493eefd10feb2bbfe67e74cdb241e4b831"
+}

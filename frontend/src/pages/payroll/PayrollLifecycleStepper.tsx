@@ -64,8 +64,8 @@ export function PayrollLifecycleStepper({ status }: { status: string }) {
                   completed
                     ? 'bg-emerald-500 text-white shadow-xs'
                     : current
-                      ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-[0_4px_12px_-3px_var(--glow)]'
-                      : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-400'
+                      ? 'bg-[var(--accent-1)] text-white'
+                      : 'bg-[var(--surface-subtle)] text-[var(--muted-foreground)] border border-[var(--border)]'
                 }`}
                 aria-hidden="true"
               >

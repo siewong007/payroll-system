@@ -27,9 +27,9 @@ const TAG_COLORS: Record<string, { bg: string; text: string; icon: string }> = {
     icon: 'bg-green-600 dark:bg-emerald-500',
   },
   marketing: {
-    bg: 'bg-purple-100 dark:bg-purple-500/15',
-    text: 'text-purple-700 dark:text-purple-300',
-    icon: 'bg-purple-600 dark:bg-purple-500',
+    bg: 'bg-zinc-100 dark:bg-zinc-800',
+    text: 'text-zinc-700 dark:text-zinc-300',
+    icon: 'bg-zinc-600 dark:bg-zinc-500',
   },
   support: {
     bg: 'bg-orange-100 dark:bg-orange-500/15',

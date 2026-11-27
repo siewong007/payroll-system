@@ -20,6 +20,7 @@ pub enum UploadReferenceKind {
     LeaveRequest,
     Document,
     CompanyLogo,
+    AttendancePhoto,
 }
 
 impl UploadReferenceKind {
@@ -34,6 +35,7 @@ impl UploadReferenceKind {
             "leave_request" => Some(Self::LeaveRequest),
             "document" => Some(Self::Document),
             "company_logo" => Some(Self::CompanyLogo),
+            "attendance_photo" => Some(Self::AttendancePhoto),
             _ => None,
         }
     }
@@ -63,4 +65,5 @@ pub struct UploadAccess {
     pub can_view_approvals: bool,
     pub can_view_documents: bool,
     pub can_view_confidential: bool,
+    pub can_view_attendance: bool,
 }

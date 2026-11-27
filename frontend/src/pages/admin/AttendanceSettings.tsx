@@ -1,8 +1,10 @@
 import { useId, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { QrCode, Fingerprint, CheckCircle2, AlertCircle, Info, Building2, Loader2 } from 'lucide-react';
-import { getPlatformAttendanceMethod, setPlatformAttendanceMethod } from '@/api/attendance';
+import { QrCode, Fingerprint, ShieldCheck, CheckCircle2, AlertCircle, Info, Building2, Loader2 } from 'lucide-react';
+import {
+  getPlatformAttendanceMethod, setPlatformAttendanceMethod, type AttendanceMethod,
+} from '@/api/attendance';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -30,10 +32,11 @@ export function AttendanceSettings() {
     enabled: canManagePlatform,
   });
 
-  const [draftMethod, setDraftMethod] = useState<'qr_code' | 'face_id' | null>(null);
+  const [draftMethod, setDraftMethod] = useState<AttendanceMethod | null>(null);
   const [draftOverride, setDraftOverride] = useState<boolean | null>(null);
 
-  const method = draftMethod ?? ((data?.method as 'qr_code' | 'face_id' | undefined) ?? 'qr_code');
+  const method: AttendanceMethod =
+    draftMethod ?? ((data?.method as AttendanceMethod | undefined) ?? 'qr_code');
   const allowOverride = draftOverride ?? (data?.allow_company_override ?? false);
 
   const mutation = useMutation({
@@ -68,8 +71,8 @@ export function AttendanceSettings() {
         <div role="status" aria-label={t('common.loading')} className="max-w-2xl card space-y-5">
           <Skeleton className="h-5 w-48" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Skeleton className="h-36 w-full rounded-2xl" />
-            <Skeleton className="h-36 w-full rounded-2xl" />
+            <Skeleton className="h-36 w-full rounded-xl" />
+            <Skeleton className="h-36 w-full rounded-xl" />
           </div>
           <Skeleton className="h-14 w-full rounded-xl" />
         </div>
@@ -104,38 +107,38 @@ export function AttendanceSettings() {
       <div className="max-w-2xl space-y-6">
 
         {/* Method Selection */}
-        <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm divide-y divide-gray-100 dark:divide-slate-800">
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border)]">
           <div className="p-6">
-            <h2 className="font-semibold text-gray-900 dark:text-slate-100 mb-1">{t('attendanceSettings.methodTitle')}</h2>
-            <p className="text-sm text-gray-600 dark:text-slate-300 mb-5">
+            <h2 className="font-semibold text-[var(--foreground)] mb-1">{t('attendanceSettings.methodTitle')}</h2>
+            <p className="text-sm text-[var(--muted-foreground)] mb-5">
               {t('attendanceSettings.methodDescription')}
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* QR Code Option */}
               <button
                 type="button"
                 aria-pressed={method === 'qr_code'}
                 onClick={() => { setDraftMethod('qr_code'); setSaved(false); }}
-                className={`flex flex-col gap-4 p-5 rounded-2xl border-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all ${
+                className={`flex flex-col gap-3 p-4 rounded-xl border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors ${
                   method === 'qr_code'
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-                    : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 bg-gray-50 dark:bg-slate-800/60'
+                    ? 'border-[var(--accent-1)] bg-[var(--accent-soft)]'
+                    : 'border-[var(--border)] hover:bg-[var(--surface-subtle)] bg-[var(--surface-subtle)]/50'
                 }`}
               >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                  method === 'qr_code' ? 'bg-violet-100 dark:bg-violet-500/20' : 'bg-gray-100 dark:bg-slate-800'
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  method === 'qr_code' ? 'bg-[var(--accent-1)] text-white' : 'bg-[var(--surface-subtle)] border border-[var(--border)] text-[var(--muted-foreground)]'
                 }`}>
-                  <QrCode className={`w-6 h-6 ${method === 'qr_code' ? 'text-violet-600 dark:text-violet-300' : 'text-gray-500 dark:text-slate-400'}`} aria-hidden="true" />
+                  <QrCode className="w-5 h-5" aria-hidden="true" />
                 </div>
                 <div>
-                  <p className="font-semibold text-gray-900 dark:text-slate-100">{t('attendanceSettings.qrTitle')}</p>
-                  <p className="text-xs text-gray-600 dark:text-slate-300 mt-0.5">
+                  <p className="font-semibold text-[var(--foreground)]">{t('attendanceSettings.qrTitle')}</p>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
                     {t('attendanceSettings.qrDescription')}
                   </p>
                 </div>
                 {method === 'qr_code' && (
-                  <div className="flex items-center gap-1.5 text-violet-700 dark:text-violet-300 text-xs font-medium">
+                  <div className="flex items-center gap-1.5 text-[var(--accent-1)] text-xs font-medium">
                     <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.selectedState')}
                   </div>
                 )}
@@ -146,25 +149,54 @@ export function AttendanceSettings() {
                 type="button"
                 aria-pressed={method === 'face_id'}
                 onClick={() => { setDraftMethod('face_id'); setSaved(false); }}
-                className={`flex flex-col gap-4 p-5 rounded-2xl border-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all ${
+                className={`flex flex-col gap-3 p-4 rounded-xl border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors ${
                   method === 'face_id'
-                    ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/10'
-                    : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 bg-gray-50 dark:bg-slate-800/60'
+                    ? 'border-[var(--accent-1)] bg-[var(--accent-soft)]'
+                    : 'border-[var(--border)] hover:bg-[var(--surface-subtle)] bg-[var(--surface-subtle)]/50'
                 }`}
               >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                  method === 'face_id' ? 'bg-sky-100 dark:bg-sky-500/20' : 'bg-gray-100 dark:bg-slate-800'
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  method === 'face_id' ? 'bg-[var(--accent-1)] text-white' : 'bg-[var(--surface-subtle)] border border-[var(--border)] text-[var(--muted-foreground)]'
                 }`}>
-                  <Fingerprint className={`w-6 h-6 ${method === 'face_id' ? 'text-sky-600 dark:text-sky-300' : 'text-gray-500 dark:text-slate-400'}`} aria-hidden="true" />
+                  <Fingerprint className="w-5 h-5" aria-hidden="true" />
                 </div>
                 <div>
-                  <p className="font-semibold text-gray-900 dark:text-slate-100">{t('attendanceSettings.faceIdTitle')}</p>
-                  <p className="text-xs text-gray-600 dark:text-slate-300 mt-0.5">
+                  <p className="font-semibold text-[var(--foreground)]">{t('attendanceSettings.faceIdTitle')}</p>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
                     {t('attendanceSettings.faceIdDescription')}
                   </p>
                 </div>
                 {method === 'face_id' && (
-                  <div className="flex items-center gap-1.5 text-sky-700 dark:text-sky-300 text-xs font-medium">
+                  <div className="flex items-center gap-1.5 text-[var(--accent-1)] text-xs font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.selectedState')}
+                  </div>
+                )}
+              </button>
+
+              {/* Combined QR + Face ID Option */}
+              <button
+                type="button"
+                aria-pressed={method === 'qr_and_face_id'}
+                onClick={() => { setDraftMethod('qr_and_face_id'); setSaved(false); }}
+                className={`flex flex-col gap-3 p-4 rounded-xl border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors ${
+                  method === 'qr_and_face_id'
+                    ? 'border-[var(--accent-1)] bg-[var(--accent-soft)]'
+                    : 'border-[var(--border)] hover:bg-[var(--surface-subtle)] bg-[var(--surface-subtle)]/50'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  method === 'qr_and_face_id' ? 'bg-[var(--accent-1)] text-white' : 'bg-[var(--surface-subtle)] border border-[var(--border)] text-[var(--muted-foreground)]'
+                }`}>
+                  <ShieldCheck className="w-5 h-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <p className="font-semibold text-[var(--foreground)]">{t('attendanceSettings.qrFaceIdTitle')}</p>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                    {t('attendanceSettings.qrFaceIdDescription')}
+                  </p>
+                </div>
+                {method === 'qr_and_face_id' && (
+                  <div className="flex items-center gap-1.5 text-[var(--accent-1)] text-xs font-medium">
                     <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.selectedState')}
                   </div>
                 )}
@@ -172,7 +204,7 @@ export function AttendanceSettings() {
             </div>
 
             {/* Face ID note */}
-            {method === 'face_id' && (
+            {(method === 'face_id' || method === 'qr_and_face_id') && (
               <div className="mt-4 flex items-start gap-2.5 bg-sky-50 dark:bg-sky-500/10 border border-sky-100 dark:border-sky-500/20 rounded-xl p-4 text-sm text-sky-800 dark:text-sky-200">
                 <Info className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
                 <span>
@@ -216,7 +248,7 @@ export function AttendanceSettings() {
           </div>
 
           {/* Save Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 bg-gray-50 dark:bg-slate-950/60 rounded-b-2xl">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 bg-[var(--surface-subtle)] rounded-b-xl">
             <div className="min-h-5">
               {saved && (
                 <span role="status" className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400 font-medium">
@@ -252,7 +284,7 @@ export function AttendanceSettings() {
         </div>
 
         {/* Info Box */}
-        <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/20 rounded-2xl p-5 text-sm text-amber-800 dark:text-amber-200">
+        <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/25 rounded-xl p-4 text-sm text-amber-800 dark:text-amber-200">
           <div className="flex items-start gap-2.5">
             <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
             <div>

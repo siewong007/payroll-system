@@ -104,6 +104,7 @@ fn permits(access: &UploadAccess, reference: &UploadReference) -> bool {
         UploadReferenceKind::Claim | UploadReferenceKind::LeaveRequest => access.can_view_approvals,
         UploadReferenceKind::Document => access.can_view_documents,
         UploadReferenceKind::CompanyLogo => true,
+        UploadReferenceKind::AttendancePhoto => access.can_view_attendance,
     }
 }
 
@@ -150,6 +151,7 @@ pub fn access_from_auth(auth: &crate::core::auth::AuthUser, company_id: Uuid) ->
         can_view_documents: auth.can(Permission::ViewDocuments),
         can_view_confidential: auth.can(Permission::ManageEmployees)
             || auth.is_payroll_privileged(),
+        can_view_attendance: auth.can(Permission::ViewAttendance),
     }
 }
 
@@ -272,6 +274,7 @@ mod tests {
             can_view_approvals: approvals,
             can_view_documents: documents,
             can_view_confidential: false,
+            can_view_attendance: false,
         }
     }
 
@@ -398,6 +401,7 @@ mod tests {
             can_view_approvals: true,
             can_view_documents: true,
             can_view_confidential: false,
+            can_view_attendance: false,
         };
         let hr_viewer = UploadAccess {
             can_view_confidential: true,
@@ -410,6 +414,25 @@ mod tests {
         };
         assert!(!permits(&plain_viewer, &confidential_doc));
         assert!(permits(&hr_viewer, &confidential_doc));
+    }
+
+    #[test]
+    fn attendance_photo_requires_owner_or_view_attendance() {
+        let emp_a = Uuid::new_v4();
+        let emp_b = Uuid::new_v4();
+        let photo_ref = reference(UploadReferenceKind::AttendancePhoto, Some(emp_a));
+
+        let owner = access(Some(emp_a), false, false);
+        assert!(permits(&owner, &photo_ref));
+
+        let coworker = access(Some(emp_b), false, false);
+        assert!(!permits(&coworker, &photo_ref));
+
+        let hr_viewer = UploadAccess {
+            can_view_attendance: true,
+            ..access(None, false, false)
+        };
+        assert!(permits(&hr_viewer, &photo_ref));
     }
 
     #[test]

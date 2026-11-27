@@ -3,25 +3,72 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, Response, StatusCode, header},
+    response::IntoResponse,
 };
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
+use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::{ClientIp, ValidatedJson};
 use crate::models::attendance::{
-    AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
-    AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
-    CheckInFaceIdRequest, CheckInQrRequest, CheckOutRequest, ManualAttendanceRequest,
-    PaginatedAttendance, QrTokenResponse, SetAttendanceMethodRequest,
+    AttendanceAnomaliesQuery, AttendanceAnomaliesReport, AttendanceExportQuery,
+    AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord, AttendanceRecordWithEmployee,
+    AttendanceSecuritySettings, AttendanceSummaryItem, AttendanceSummaryQuery,
+    CheckInFaceIdRequest, CheckInQrFaceIdRequest, CheckInQrRequest, CheckOutRequest,
+    CreatePersonalQrRequest, DeviceChallengeRequest, DeviceChallengeResponse,
+    EmployeeAttendanceDevice, EmployeeAttendanceDeviceWithEmployee, EnrollDeviceRequest,
+    KioskCheckInRequest, KioskCheckInResponse, ManualAttendanceRequest, PaginatedAttendance,
+    QrTokenResponse, RevokeDeviceRequest, SetAttendanceMethodRequest,
     SetCompanyAttendanceMethodRequest, UpdateAttendanceRecordRequest,
+    UpdateAttendanceSecuritySettingsRequest,
 };
 use crate::models::attendance_kiosk::{
     CreateKioskCredentialRequest, CreateKioskCredentialResponse, KioskCredential,
 };
 use crate::models::user_company::StepUpConfirmRequest;
-use crate::services::{attendance_service, audit_service::AuditRequestMeta};
+use crate::services::attendance_service::CheckInContext;
+use crate::services::{
+    attendance_device_service, attendance_service, audit_service::AuditRequestMeta,
+};
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceListQuery {
+    pub status: Option<String>,
+}
+
+fn extract_device_cookie_and_ua(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> (Uuid, Option<(header::HeaderName, String)>, Option<String>) {
+    let (cookie_id, set_cookie) = cookie::extract_or_mint_attendance_device_cookie(
+        headers,
+        &state.config.jwt_secret,
+        &state.config.frontend_url,
+    );
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(500).collect());
+    (cookie_id, set_cookie, user_agent)
+}
+
+fn json_with_cookie<T: serde::Serialize>(
+    body: T,
+    set_cookie: Option<(header::HeaderName, String)>,
+) -> axum::response::Response {
+    let mut headers = HeaderMap::new();
+    if let Some((name, val)) = set_cookie
+        && let Ok(hv) = val.parse()
+    {
+        headers.insert(name, hv);
+    }
+    (headers, Json(body)).into_response()
+}
 
 // ─── Effective Method ───
 
@@ -155,10 +202,11 @@ pub async fn generate_qr_token(
 pub async fn check_in_qr(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     audit_meta: AuditRequestMeta,
     ClientIp(client_ip): ClientIp,
     Json(req): Json<CheckInQrRequest>,
-) -> AppResult<Json<AttendanceRecord>> {
+) -> AppResult<axum::response::Response> {
     let employee_id = auth.employee_id()?;
     let company_id = auth.company_id()?;
 
@@ -170,7 +218,19 @@ pub async fn check_in_qr(
         ));
     }
 
-    let record = attendance_service::check_in_qr(
+    let (cookie_id, set_cookie, user_agent) = extract_device_cookie_and_ua(&headers, &state);
+    let ctx = CheckInContext {
+        user_id: Some(auth.0.sub),
+        session_id: Some(auth.0.sid),
+        cookie_device_id: Some(cookie_id),
+        user_agent,
+        passkey_id: None,
+        passkey_is_synced: false,
+        device_proof: req.device_proof,
+        photo_base64: req.photo_base64,
+    };
+
+    let record = attendance_service::check_in_qr_with_context(
         &state.pool,
         employee_id,
         company_id,
@@ -178,6 +238,7 @@ pub async fn check_in_qr(
         req.latitude,
         req.longitude,
         client_ip,
+        &ctx,
     )
     .await?;
 
@@ -195,13 +256,13 @@ pub async fn check_in_qr(
     )
     .await;
 
-    Ok(Json(record))
+    Ok(json_with_cookie(record, set_cookie))
 }
 
-// ─── Check In: Face ID ───
+// ─── Check In: Face ID (and QR + Face ID) ───
 
-/// Start the WebAuthn assertion ceremony for a face-id check-in. The
-/// completing call is `check_in_face_id` with the returned challenge id.
+/// Start the WebAuthn assertion ceremony for a face-id or combined qr_and_face_id
+/// check-in. The completing call is `check_in_face_id` or `check_in_qr_face_id`.
 pub async fn check_in_face_id_begin(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -211,7 +272,7 @@ pub async fn check_in_face_id_begin(
     let company_id = auth.company_id()?;
 
     let effective = attendance_service::get_effective_method(&state.pool, company_id).await?;
-    if effective.method != "face_id" {
+    if effective.method != "face_id" && effective.method != "qr_and_face_id" {
         return Err(AppError::BadRequest(
             "Face ID check-in is not enabled for this company".into(),
         ));
@@ -224,10 +285,11 @@ pub async fn check_in_face_id_begin(
 pub async fn check_in_face_id(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     audit_meta: AuditRequestMeta,
     ClientIp(client_ip): ClientIp,
     Json(req): Json<CheckInFaceIdRequest>,
-) -> AppResult<Json<AttendanceRecord>> {
+) -> AppResult<axum::response::Response> {
     let employee_id = auth.employee_id()?;
     let company_id = auth.company_id()?;
 
@@ -242,7 +304,7 @@ pub async fn check_in_face_id(
     // Verify the passkey assertion server-side against this user's registered
     // credentials. A record whose method claims biometric presence must not be
     // creatable with a bare JWT.
-    attendance_service::face_id_verify(
+    let face_id_info = attendance_service::face_id_verify(
         &state.pool,
         &state.webauthn,
         auth.0.sub,
@@ -251,13 +313,26 @@ pub async fn check_in_face_id(
     )
     .await?;
 
-    let record = attendance_service::check_in_face_id(
+    let (cookie_id, set_cookie, user_agent) = extract_device_cookie_and_ua(&headers, &state);
+    let ctx = CheckInContext {
+        user_id: Some(auth.0.sub),
+        session_id: Some(auth.0.sid),
+        cookie_device_id: Some(cookie_id),
+        user_agent,
+        passkey_id: Some(face_id_info.passkey_id),
+        passkey_is_synced: face_id_info.is_synced,
+        device_proof: req.device_proof,
+        photo_base64: req.photo_base64,
+    };
+
+    let record = attendance_service::check_in_face_id_with_context(
         &state.pool,
         employee_id,
         company_id,
         req.latitude,
         req.longitude,
         client_ip,
+        &ctx,
     )
     .await?;
 
@@ -276,7 +351,78 @@ pub async fn check_in_face_id(
     )
     .await;
 
-    Ok(Json(record))
+    Ok(json_with_cookie(record, set_cookie))
+}
+
+pub async fn check_in_qr_face_id(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
+    ClientIp(client_ip): ClientIp,
+    Json(req): Json<CheckInQrFaceIdRequest>,
+) -> AppResult<axum::response::Response> {
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
+
+    let effective = attendance_service::get_effective_method(&state.pool, company_id).await?;
+    if effective.method != "qr_and_face_id" {
+        return Err(AppError::BadRequest(
+            "Combined QR + Face ID check-in is not enabled for this company".into(),
+        ));
+    }
+
+    // Validate QR token first so an expired QR does not burn the WebAuthn challenge.
+    attendance_service::validate_qr_token(&state.pool, &req.token, company_id).await?;
+
+    let face_id_info = attendance_service::face_id_verify(
+        &state.pool,
+        &state.webauthn,
+        auth.0.sub,
+        req.challenge_id,
+        &req.credential,
+    )
+    .await?;
+
+    let (cookie_id, set_cookie, user_agent) = extract_device_cookie_and_ua(&headers, &state);
+    let ctx = CheckInContext {
+        user_id: Some(auth.0.sub),
+        session_id: Some(auth.0.sid),
+        cookie_device_id: Some(cookie_id),
+        user_agent,
+        passkey_id: Some(face_id_info.passkey_id),
+        passkey_is_synced: face_id_info.is_synced,
+        device_proof: req.device_proof,
+        photo_base64: req.photo_base64,
+    };
+
+    let record = attendance_service::check_in_qr_face_id(
+        &state.pool,
+        employee_id,
+        company_id,
+        &req.token,
+        req.latitude,
+        req.longitude,
+        client_ip,
+        &ctx,
+    )
+    .await?;
+
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "create",
+        "attendance_record",
+        Some(record.id),
+        None,
+        Some(serde_json::to_value(&record).unwrap_or_default()),
+        Some("Employee checked in via QR code and Face ID"),
+        Some(&audit_meta),
+    )
+    .await;
+
+    Ok(json_with_cookie(record, set_cookie))
 }
 
 // ─── Check Out ───
@@ -284,22 +430,52 @@ pub async fn check_in_face_id(
 pub async fn check_out(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     ClientIp(client_ip): ClientIp,
     Json(req): Json<CheckOutRequest>,
-) -> AppResult<Json<AttendanceRecord>> {
+) -> AppResult<axum::response::Response> {
     let employee_id = auth.employee_id()?;
     let company_id = auth.company_id()?;
 
-    let record = attendance_service::check_out(
+    let (cookie_id, set_cookie, user_agent) = extract_device_cookie_and_ua(&headers, &state);
+    let ctx = CheckInContext {
+        user_id: Some(auth.0.sub),
+        session_id: Some(auth.0.sid),
+        cookie_device_id: Some(cookie_id),
+        user_agent,
+        passkey_id: None,
+        passkey_is_synced: false,
+        device_proof: req.device_proof,
+        photo_base64: req.photo_base64,
+    };
+
+    let record = attendance_service::check_out_with_context(
         &state.pool,
         employee_id,
         company_id,
         req.latitude,
         req.longitude,
         client_ip,
+        &ctx,
     )
     .await?;
-    Ok(Json(record))
+
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "update",
+        "attendance_record",
+        Some(record.id),
+        None,
+        Some(serde_json::to_value(&record).unwrap_or_default()),
+        Some("Employee checked out"),
+        Some(&audit_meta),
+    )
+    .await;
+
+    Ok(json_with_cookie(record, set_cookie))
 }
 
 // ─── Today's Status (employee) ───
@@ -599,5 +775,208 @@ pub async fn kiosk_qr(
     // the live token). The credential's last_used_at/last_used_ip heartbeat —
     // updated by generate_qr_via_kiosk — is the kiosk activity record.
 
+    Ok(Json(resp))
+}
+
+// ─── Anti-Buddy-Punching: Bound Devices, Security Settings, Anomalies, Personal QR ───
+
+pub async fn create_device_challenge(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<DeviceChallengeRequest>,
+) -> AppResult<Json<DeviceChallengeResponse>> {
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
+    let resp = attendance_device_service::issue_challenge(
+        &state.pool,
+        company_id,
+        auth.0.sub,
+        employee_id,
+        &req.purpose,
+    )
+    .await?;
+    Ok(Json(resp))
+}
+
+pub async fn enroll_device(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
+    Json(req): Json<EnrollDeviceRequest>,
+) -> AppResult<axum::response::Response> {
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
+    let (cookie_id, set_cookie, user_agent) = extract_device_cookie_and_ua(&headers, &state);
+    let device = attendance_device_service::enroll_device(
+        &state.pool,
+        company_id,
+        employee_id,
+        auth.0.sub,
+        &req,
+        Some(cookie_id),
+        user_agent.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
+    Ok(json_with_cookie(device, set_cookie))
+}
+
+pub async fn my_devices(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<Vec<EmployeeAttendanceDevice>>> {
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
+    let devices =
+        attendance_device_service::list_my_devices(&state.pool, company_id, employee_id).await?;
+    Ok(Json(devices))
+}
+
+pub async fn list_company_devices(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(q): Query<DeviceListQuery>,
+) -> AppResult<Json<Vec<EmployeeAttendanceDeviceWithEmployee>>> {
+    let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ViewAttendance)?;
+    let devices = attendance_device_service::list_company_devices(
+        &state.pool,
+        company_id,
+        q.status.as_deref(),
+    )
+    .await?;
+    Ok(Json(devices))
+}
+
+pub async fn approve_device(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<EmployeeAttendanceDevice>> {
+    let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ManageAttendance)?;
+    let device = attendance_device_service::approve_device(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
+    Ok(Json(device))
+}
+
+pub async fn revoke_device(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Path(id): Path<Uuid>,
+    Json(req): Json<RevokeDeviceRequest>,
+) -> AppResult<Json<EmployeeAttendanceDevice>> {
+    let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ManageAttendance)?;
+    let device = attendance_device_service::revoke_device(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        req.reason.as_deref(),
+        Some(&audit_meta),
+    )
+    .await?;
+    Ok(Json(device))
+}
+
+pub async fn get_security_settings(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<AttendanceSecuritySettings>> {
+    let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ViewAttendance)?;
+    let settings =
+        attendance_device_service::get_security_settings(&state.pool, company_id).await?;
+    Ok(Json(settings))
+}
+
+pub async fn update_security_settings(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Json(req): Json<UpdateAttendanceSecuritySettingsRequest>,
+) -> AppResult<Json<AttendanceSecuritySettings>> {
+    let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ManageAttendance)?;
+    let settings = attendance_device_service::update_security_settings(
+        &state.pool,
+        company_id,
+        &req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
+    Ok(Json(settings))
+}
+
+pub async fn get_anomalies(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(q): Query<AttendanceAnomaliesQuery>,
+) -> AppResult<Json<AttendanceAnomaliesReport>> {
+    let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ViewAttendance)?;
+    let report = attendance_service::get_attendance_anomalies(&state.pool, company_id, &q).await?;
+    Ok(Json(report))
+}
+
+pub async fn create_personal_qr(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+    Json(req): Json<CreatePersonalQrRequest>,
+) -> AppResult<axum::response::Response> {
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
+    let (cookie_id, set_cookie, user_agent) = extract_device_cookie_and_ua(&headers, &state);
+    let ctx = CheckInContext {
+        user_id: Some(auth.0.sub),
+        session_id: Some(auth.0.sid),
+        cookie_device_id: Some(cookie_id),
+        user_agent,
+        passkey_id: None,
+        passkey_is_synced: false,
+        device_proof: None,
+        photo_base64: None,
+    };
+    let resp = attendance_service::create_personal_qr_token(
+        &state.pool,
+        company_id,
+        employee_id,
+        auth.0.sub,
+        &req,
+        &ctx,
+    )
+    .await?;
+    Ok(json_with_cookie(resp, set_cookie))
+}
+
+pub async fn kiosk_check_in(
+    State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
+    headers: HeaderMap,
+    Json(req): Json<KioskCheckInRequest>,
+) -> AppResult<Json<KioskCheckInResponse>> {
+    let secret = extract_kiosk_secret(&headers)
+        .ok_or_else(|| AppError::Unauthorized("Missing kiosk credential".into()))?;
+    let ip = audit_meta.ip_address.as_deref();
+    let resp = attendance_service::kiosk_camera_check_in(
+        &state.pool,
+        &secret,
+        &req,
+        ip,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(resp))
 }

@@ -57,17 +57,17 @@ export function ChangePasswordCard() {
     <section className="card">
       <div className="section-header">
         <div className="flex items-center gap-2">
-          <KeyRound className="w-4 h-4 text-gray-400 dark:text-slate-400" />
+          <KeyRound className="w-4 h-4 text-[var(--muted-foreground)]" />
           <span className="section-title">{t('auth.passwordCard.title')}</span>
         </div>
       </div>
 
-      <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
+      <p className="text-sm text-[var(--muted-foreground)] mb-4">
         {t('auth.passwordCard.description')}
       </p>
 
       {error && (
-        <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl mb-4">
+        <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 text-sm px-3.5 py-2.5 rounded-lg mb-4">
           {error}
         </div>
       )}

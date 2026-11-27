@@ -48,30 +48,30 @@ export function ForgotPassword() {
 
   return (
     <AuthLayout>
-      <div className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-6 sm:p-8">
-        <div className="text-center mb-8">
-          <BrandLogo variant="lockup-dark" priority className="h-10 w-auto mx-auto mb-4 rounded-xl" />
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-slate-100">{t('auth.forgot.title')}</h1>
-          <p className="text-sm text-gray-600 dark:text-slate-300 mt-1">
+      <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm p-6 sm:p-7">
+        <div className="text-center mb-6">
+          <BrandLogo variant="lockup-auto" priority className="h-10 w-auto mx-auto mb-3 rounded-lg" />
+          <h1 className="text-xl font-semibold text-[var(--foreground)]">{t('auth.forgot.title')}</h1>
+          <p className="text-sm text-[var(--muted-foreground)] mt-1">
             {t('auth.forgot.subtitle')}
           </p>
         </div>
 
         {submitted ? (
           <div className="text-center space-y-4">
-            <div className="w-16 h-16 bg-green-50 dark:bg-emerald-500/15 rounded-full flex items-center justify-center mx-auto">
-              <svg className="w-8 h-8 text-green-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <div className="w-12 h-12 bg-emerald-50 dark:bg-emerald-500/15 border border-emerald-200 dark:border-emerald-500/30 rounded-lg flex items-center justify-center mx-auto">
+              <svg className="w-6 h-6 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
             <div>
-              <p className="text-sm text-gray-600 dark:text-slate-300">
+              <p className="text-sm text-[var(--muted-foreground)]">
                 {t('auth.forgot.sentBody')}
               </p>
             </div>
             <Link
               to="/login"
-              className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-black dark:text-indigo-400 font-medium hover:underline rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-[var(--accent-1)] font-medium hover:underline rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             >
               {t('auth.backToLogin')}
             </Link>
@@ -79,7 +79,7 @@ export function ForgotPassword() {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
-              <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-700 dark:text-red-300 text-sm px-4 py-3 rounded-xl">
+              <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 text-sm px-3.5 py-2.5 rounded-lg">
                 {error}
               </div>
             )}
@@ -126,7 +126,7 @@ export function ForgotPassword() {
             <div className="text-center">
               <Link
                 to="/login"
-                className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
                 {t('auth.backToLogin')}
               </Link>

@@ -98,15 +98,15 @@ export function SessionManagement() {
             const isRowBusy = revokingId === session.id;
             return (
               <div key={session.id} className="py-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
-                  <Icon className="w-[18px] h-[18px] text-gray-600 dark:text-slate-300" />
+                <div className="w-8 h-8 rounded-md border border-[var(--border)] bg-[var(--surface-subtle)] flex items-center justify-center shrink-0">
+                  <Icon className="w-4 h-4 text-[var(--muted-foreground)]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap gap-2 items-center">
-                    <span className="text-sm font-medium text-gray-900 dark:text-slate-100">{deviceLabel(parsed)}</span>
+                    <span className="text-[13px] font-medium text-[var(--foreground)]">{deviceLabel(parsed)}</span>
                     {session.current && (
                       <span className="badge badge-approved inline-flex items-center gap-1.5">
-                        <span className="glow-dot" /> {t('auth.sessions.thisDevice')}
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" /> {t('auth.sessions.thisDevice')}
                       </span>
                     )}
                   </div>

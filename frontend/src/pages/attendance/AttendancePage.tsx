@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useId, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, lazy, Suspense, useId, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/lib/toast';
@@ -25,6 +25,9 @@ import {
   Settings,
   Link2,
   WifiOff,
+  Camera,
+  ShieldAlert,
+  Smartphone,
 } from 'lucide-react';
 import {
   getAttendanceMethod,
@@ -41,10 +44,24 @@ import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
-import { GeofenceCard } from '@/components/attendance/GeofenceCard';
-import { NetworkCard } from '@/components/attendance/NetworkCard';
-import { KioskCredentialsModal } from './KioskCredentialsModal';
+const WorkScheduleCard = lazy(() =>
+  import('@/components/attendance/WorkScheduleCard').then((m) => ({ default: m.WorkScheduleCard }))
+);
+const GeofenceCard = lazy(() =>
+  import('@/components/attendance/GeofenceCard').then((m) => ({ default: m.GeofenceCard }))
+);
+const NetworkCard = lazy(() =>
+  import('@/components/attendance/NetworkCard').then((m) => ({ default: m.NetworkCard }))
+);
+const AttendanceSecurityCard = lazy(() =>
+  import('@/components/attendance/AttendanceSecurityCard').then((m) => ({ default: m.AttendanceSecurityCard }))
+);
+const AttendanceAnomaliesTab = lazy(() =>
+  import('@/components/attendance/AttendanceAnomaliesTab').then((m) => ({ default: m.AttendanceAnomaliesTab }))
+);
+const KioskCredentialsModal = lazy(() =>
+  import('./KioskCredentialsModal').then((m) => ({ default: m.KioskCredentialsModal }))
+);
 import {
   METHOD_CONFIG,
   STATUS_COLORS,
@@ -54,9 +71,9 @@ import {
   formatTime,
   todayInZone,
 } from './attendanceHelpers';
-import { QrPanel } from './QrPanel';
+const QrPanel = lazy(() => import('./QrPanel').then((m) => ({ default: m.QrPanel })));
 import { StatsBar, SummaryTab } from './AttendanceSummaryTab';
-import { EditAttendanceModal, ManualEntryModal, RecordCard } from './AttendanceRecordModals';
+import { AttendancePhotoModal, EditAttendanceModal, ManualEntryModal, RecordCard } from './AttendanceRecordModals';
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
@@ -64,7 +81,7 @@ import { EditAttendanceModal, ManualEntryModal, RecordCard } from './AttendanceR
  *  the initial state as filters are added. */
 const NO_FILTERS = {
   date_from: '', date_to: '', status: '', method: '', employee_id: '',
-  open_only: false, outside_geofence_only: false, offsite_network_only: false,
+  open_only: false, outside_geofence_only: false, offsite_network_only: false, flagged_only: false,
 };
 
 export function AttendancePage() {
@@ -79,6 +96,7 @@ export function AttendancePage() {
   const urlOpenOnly = searchParams.get('open_only') === '1';
   const urlOutsideGeofence = searchParams.get('outside_geofence') === '1';
   const urlOffsiteNetwork = searchParams.get('offsite_network') === '1';
+  const urlFlagged = searchParams.get('flagged') === '1';
   const urlTab = searchParams.get('tab');
 
   const canView = can('view_attendance');
@@ -88,16 +106,18 @@ export function AttendancePage() {
   const canManageSchedule = can('manage_work_schedules');
   const canManageGeofence = can('manage_geofence');
   const canManageNetworks = can('manage_attendance_networks');
-  const canConfigure = canManageSchedule || canManageGeofence || canManageNetworks;
+  const canConfigure = canManageSchedule || canManageGeofence || canManageNetworks || canEdit;
 
-  const initialTab: 'records' | 'summary' | 'settings' =
+  const initialTab: 'records' | 'summary' | 'anomalies' | 'settings' =
     urlTab === 'settings' && canConfigure
       ? 'settings'
-      : urlTab === 'summary'
-        ? 'summary'
-        : 'records';
+      : urlTab === 'anomalies' && canView
+        ? 'anomalies'
+        : urlTab === 'summary'
+          ? 'summary'
+          : 'records';
 
-  const [tab, setTab] = useState<'records' | 'summary' | 'settings'>(initialTab);
+  const [tab, setTab] = useState<'records' | 'summary' | 'anomalies' | 'settings'>(initialTab);
   const [filterOverrides, setFilterOverrides] = useState<typeof NO_FILTERS | null>(null);
   const [page, setPage] = useState(1);
   const tabsIdPrefix = useId();
@@ -111,13 +131,15 @@ export function AttendancePage() {
         open_only: urlOpenOnly,
         outside_geofence_only: urlOutsideGeofence,
         offsite_network_only: urlOffsiteNetwork,
+        flagged_only: urlFlagged,
       },
-    [filterOverrides, urlStatus, urlOpenOnly, urlOutsideGeofence, urlOffsiteNetwork],
+    [filterOverrides, urlStatus, urlOpenOnly, urlOutsideGeofence, urlOffsiteNetwork, urlFlagged],
   );
 
   const [showManual, setShowManual] = useState(false);
   const [showHeaderKiosks, setShowHeaderKiosks] = useState(false);
   const [editRecord, setEditRecord] = useState<AttendanceRecordWithEmployee | null>(null);
+  const [photoRecord, setPhotoRecord] = useState<AttendanceRecordWithEmployee | null>(null);
   const [exporting, setExporting] = useState(false);
   const [pageError, setPageError] = useState('');
   const [backfillDate, setBackfillDate] = useState('');
@@ -146,6 +168,7 @@ export function AttendancePage() {
       open_only:   filters.open_only   || undefined,
       outside_geofence_only: filters.outside_geofence_only || undefined,
       offsite_network_only: filters.offsite_network_only || undefined,
+      flagged_only: filters.flagged_only || undefined,
       page,
       per_page:  perPage,
     }),
@@ -187,12 +210,13 @@ export function AttendancePage() {
 
   const clearFilters = () => {
     setFilterOverrides(NO_FILTERS);
-    if (urlStatus || urlOpenOnly || urlOutsideGeofence || urlOffsiteNetwork) {
+    if (urlStatus || urlOpenOnly || urlOutsideGeofence || urlOffsiteNetwork || urlFlagged) {
       const next = new URLSearchParams(searchParams);
       next.delete('status');
       next.delete('open_only');
       next.delete('outside_geofence');
       next.delete('offsite_network');
+      next.delete('flagged');
       setSearchParams(next, { replace: true });
     }
     setPage(1);
@@ -201,7 +225,7 @@ export function AttendancePage() {
   const hasFilters = Boolean(
     filters.date_from || filters.date_to || filters.status ||
     filters.method || filters.employee_id || filters.open_only ||
-    filters.outside_geofence_only || filters.offsite_network_only
+    filters.outside_geofence_only || filters.offsite_network_only || filters.flagged_only
   );
 
   const showOpenSessions = () => {
@@ -227,6 +251,7 @@ export function AttendancePage() {
       ? [
           { key: 'records' as const, label: t('attendance.page.tabs.records'), icon: Clock },
           { key: 'summary' as const, label: t('attendance.page.tabs.summary'), icon: ListChecks },
+          { key: 'anomalies' as const, label: t('attendance.page.tabs.anomalies'), icon: ShieldAlert },
         ]
       : [{ key: 'records' as const, label: t('attendance.page.tabs.records'), icon: Clock }]),
     ...(canConfigure
@@ -234,7 +259,9 @@ export function AttendancePage() {
       : []),
   ];
 
-  const showQrPanel = method?.method === 'qr_code' && (canGenerateQr || canManageKiosks);
+  const showQrPanel =
+    (method?.method === 'qr_code' || method?.method === 'qr_and_face_id') &&
+    (canGenerateQr || canManageKiosks);
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
     let targetIndex: number | null = null;
@@ -266,7 +293,7 @@ export function AttendancePage() {
         title={t('attendance.page.title')}
         actions={
           <div className="flex flex-wrap gap-2 shrink-0">
-            {canManageKiosks && method?.method !== 'qr_code' && (
+            {canManageKiosks && method?.method !== 'qr_code' && method?.method !== 'qr_and_face_id' && (
               <button
                 type="button"
                 onClick={() => setShowHeaderKiosks(true)}
@@ -292,6 +319,7 @@ export function AttendancePage() {
                       open_only:             filters.open_only || undefined,
                       outside_geofence_only: filters.outside_geofence_only || undefined,
                       offsite_network_only:  filters.offsite_network_only || undefined,
+                      flagged_only:          filters.flagged_only || undefined,
                     });
                   } catch (e) {
                     setPageError(getErrorMessage(e, t('attendance.page.exportFailed')));
@@ -342,6 +370,7 @@ export function AttendancePage() {
               </option>
               <option value="qr_code">{attMethodLabel('qr_code')}</option>
               <option value="face_id">{attMethodLabel('face_id')}</option>
+              <option value="qr_and_face_id">{attMethodLabel('qr_and_face_id')}</option>
             </select>
           ) : (
             <span className="font-medium text-gray-700 dark:text-slate-200">
@@ -398,24 +427,43 @@ export function AttendancePage() {
 
       <div id={activePanelId} role="tabpanel" aria-labelledby={activeTabId}>
       {tab === 'settings' && canConfigure ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {canManageSchedule && <WorkScheduleCard />}
-          {canManageGeofence && <GeofenceCard />}
-          {canManageNetworks && (
-            <div className="lg:col-span-2">
-              <NetworkCard enabled={canManageNetworks} />
-            </div>
-          )}
-        </div>
+        <Suspense fallback={null}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {canManageSchedule && <WorkScheduleCard />}
+            {canManageGeofence && <GeofenceCard />}
+            {(canEdit || canView) && <AttendanceSecurityCard canManage={canEdit} />}
+            {canManageNetworks && (
+              <div className="lg:col-span-2">
+                <NetworkCard enabled={canManageNetworks} />
+              </div>
+            )}
+          </div>
+        </Suspense>
+      ) : tab === 'anomalies' && canView ? (
+        <Suspense fallback={null}>
+          <AttendanceAnomaliesTab
+            today={today}
+            onViewFlaggedRecords={() => {
+              setTab('records');
+              setFilterOverrides({ ...NO_FILTERS, flagged_only: true });
+              setPage(1);
+            }}
+            onReviewDevices={() => {
+              if (canConfigure) setTab('settings');
+            }}
+          />
+        </Suspense>
       ) : tab === 'summary' && canView ? (
         <SummaryTab today={today} canExport={canView} canView={canView} />
       ) : (
       <div className={`grid grid-cols-1 gap-6 ${showQrPanel ? '2xl:grid-cols-[300px_minmax(0,1fr)]' : ''}`}>
         {/* QR Panel — only in QR mode */}
         {showQrPanel && (
-          <div>
-            <QrPanel canGenerate={canGenerateQr} canManageKiosks={canManageKiosks} />
-          </div>
+          <Suspense fallback={null}>
+            <div>
+              <QrPanel canGenerate={canGenerateQr} canManageKiosks={canManageKiosks} />
+            </div>
+          </Suspense>
         )}
 
         {/* Records Table */}
@@ -469,6 +517,8 @@ export function AttendancePage() {
                 <option value="">{t('attendance.page.allMethods')}</option>
                 <option value="qr_code">{attMethodLabel('qr_code')}</option>
                 <option value="face_id">{attMethodLabel('face_id')}</option>
+                <option value="qr_and_face_id">{attMethodLabel('qr_and_face_id')}</option>
+                <option value="kiosk_photo">{attMethodLabel('kiosk_photo')}</option>
                 <option value="manual">{attMethodLabel('manual')}</option>
               </select>
               <label className="min-h-11 sm:min-h-9 flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
@@ -497,6 +547,15 @@ export function AttendancePage() {
                   className="w-4 h-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)]"
                 />
                 {t('attendance.page.offsiteNetworkOnly')}
+              </label>
+              <label className="min-h-11 sm:min-h-9 flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={filters.flagged_only}
+                  onChange={e => updateFilter('flagged_only', e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)]"
+                />
+                {t('attendance.page.flaggedOnly')}
               </label>
               {hasFilters && (
                 <button
@@ -599,6 +658,7 @@ export function AttendancePage() {
                       canEdit={canEdit}
                       timeZone={timeZone}
                       onEdit={() => setEditRecord(r)}
+                      onViewPhotos={() => setPhotoRecord(r)}
                     />
                   ))}
                 </div>
@@ -643,6 +703,12 @@ export function AttendancePage() {
                             <td className="px-5 py-3.5">
                               <div className="font-medium text-gray-900 dark:text-slate-100">{r.full_name}</div>
                               <div className="text-xs text-gray-500 dark:text-slate-400">{r.employee_number}</div>
+                              {r.check_in_device_label && (
+                                <div className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-slate-400">
+                                  <Smartphone className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                  <span>{r.check_in_device_label}</span>
+                                </div>
+                              )}
                               {r.notes && (
                                 <div className="text-xs text-gray-500 dark:text-slate-400 truncate max-w-[220px]" title={r.notes}>
                                   {r.notes}
@@ -687,7 +753,7 @@ export function AttendancePage() {
                               </div>
                             </td>
                             <td className="px-5 py-3.5 whitespace-nowrap">
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
                                 {statusCfg && (
                                   <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg}`}>
                                     {attStatusLabel(r.status)}
@@ -702,6 +768,27 @@ export function AttendancePage() {
                                   <span title={t('attendance.records.offsiteNetwork')} className="text-amber-600 dark:text-amber-400">
                                     <WifiOff className="w-3.5 h-3.5" aria-label={t('attendance.records.offsiteNetwork')} />
                                   </span>
+                                )}
+                                {r.anomaly_flags?.map((flag) => (
+                                  <span
+                                    key={flag}
+                                    title={t(`attendance.anomalies.flags.${flag}`, { defaultValue: flag })}
+                                    className="inline-flex items-center gap-1 rounded-full bg-red-50 dark:bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-300"
+                                  >
+                                    <ShieldAlert className="w-3 h-3" aria-hidden="true" />
+                                    <span>{t(`attendance.anomalies.flags.${flag}`, { defaultValue: flag })}</span>
+                                  </span>
+                                ))}
+                                {(r.check_in_photo_url || r.check_out_photo_url || r.check_in_photo_purged_at || r.check_out_photo_purged_at) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPhotoRecord(r)}
+                                    title={t('attendance.photo.viewPhotos')}
+                                    aria-label={`${t('attendance.photo.viewPhotos')} \u2014 ${r.full_name}`}
+                                    className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent-1)] hover:opacity-85"
+                                  >
+                                    <Camera className="w-3 h-3" aria-hidden="true" />
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -724,7 +811,7 @@ export function AttendancePage() {
                                       href={`https://maps.google.com/?q=${r.checkout_latitude},${r.checkout_longitude}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 hover:underline"
+                                      className="flex items-center gap-1 text-[var(--accent-1)] hover:underline"
                                     >
                                       <MapPin className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                                       {t('attendance.records.checkOutLocation')}
@@ -814,8 +901,13 @@ export function AttendancePage() {
       </div>
 
       {showManual && <ManualEntryModal onClose={() => setShowManual(false)} />}
-      {showHeaderKiosks && <KioskCredentialsModal onClose={() => setShowHeaderKiosks(false)} />}
+      {showHeaderKiosks && (
+        <Suspense fallback={null}>
+          <KioskCredentialsModal onClose={() => setShowHeaderKiosks(false)} />
+        </Suspense>
+      )}
       {editRecord && <EditAttendanceModal record={editRecord} onClose={() => setEditRecord(null)} />}
+      {photoRecord && <AttendancePhotoModal record={photoRecord} onClose={() => setPhotoRecord(null)} />}
     </div>
   );
 }

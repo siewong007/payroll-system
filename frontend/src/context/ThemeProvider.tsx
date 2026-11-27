@@ -42,7 +42,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.toggle('dark', resolvedTheme === 'dark');
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (themeColorMeta) {
-      themeColorMeta.setAttribute('content', resolvedTheme === 'dark' ? '#0b1120' : '#1B2E4B');
+      themeColorMeta.setAttribute('content', resolvedTheme === 'dark' ? '#09090b' : '#1B2E4B');
     }
     const statusBarMeta = document.querySelector(
       'meta[name="apple-mobile-web-app-status-bar-style"]',

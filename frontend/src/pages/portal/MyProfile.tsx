@@ -94,7 +94,7 @@ function ProfileDetails({
       </div>
 
       {/* Mobile section tabs to prevent long multi-card scroll; px-2 + shrink-0 avoids 360px clipping */}
-      <div className="lg:hidden flex items-center gap-1 rounded-2xl bg-white/80 dark:bg-slate-900/80 p-1 ring-1 ring-gray-200/70 dark:ring-slate-800 overflow-x-auto scrollbar-thin">
+      <div className="lg:hidden flex items-center gap-1 rounded-xl bg-[var(--card)] border border-[var(--border)] p-1 overflow-x-auto scrollbar-thin">
         {tabs.map((item) => {
           const active = mobileTab === item.key;
           return (
@@ -105,7 +105,7 @@ function ProfileDetails({
               aria-pressed={active}
               className={`min-h-11 sm:min-h-10 shrink-0 sm:flex-1 whitespace-nowrap rounded-xl px-2.5 sm:px-3 py-2 text-xs font-semibold leading-tight transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                 active
-                  ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-xs'
+                  ? 'bg-[var(--accent-1)] text-white'
                   : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100'
               }`}
             >

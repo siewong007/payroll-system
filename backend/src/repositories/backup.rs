@@ -34,7 +34,11 @@ pub async fn company(
                   created_at, updated_at,
                   attendance_method, timezone AS "timezone?", geofence_mode AS "geofence_mode?",
                   attendance_network_mode AS "attendance_network_mode?",
-                  auto_absent_last_run_date
+                  auto_absent_last_run_date,
+                  attendance_device_mode AS "attendance_device_mode?",
+                  attendance_device_auto_approve_first AS "attendance_device_auto_approve_first?",
+                  attendance_photo_mode AS "attendance_photo_mode?",
+                  attendance_photo_retention_days AS "attendance_photo_retention_days?"
            FROM companies WHERE id = $1"#,
         company_id,
     )
@@ -540,7 +544,11 @@ pub async fn update_company(
                timezone=COALESCE($22, timezone),
                geofence_mode=COALESCE($23, geofence_mode),
                attendance_network_mode=COALESCE($24, attendance_network_mode),
-               auto_absent_last_run_date=COALESCE($25, auto_absent_last_run_date)
+               auto_absent_last_run_date=COALESCE($25, auto_absent_last_run_date),
+               attendance_device_mode=COALESCE($26, attendance_device_mode),
+               attendance_device_auto_approve_first=COALESCE($27, attendance_device_auto_approve_first),
+               attendance_photo_mode=COALESCE($28, attendance_photo_mode),
+               attendance_photo_retention_days=COALESCE($29, attendance_photo_retention_days)
                WHERE id = $1"#,
         id,
         c.registration_number,
@@ -567,6 +575,10 @@ pub async fn update_company(
         c.geofence_mode,
         c.attendance_network_mode,
         c.auto_absent_last_run_date,
+        c.attendance_device_mode,
+        c.attendance_device_auto_approve_first,
+        c.attendance_photo_mode,
+        c.attendance_photo_retention_days,
     )
     .execute(executor)
     .await?;
@@ -585,10 +597,14 @@ pub async fn insert_company(
         r#"INSERT INTO companies (id, name, registration_number, tax_number, epf_number, socso_code,
                eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country,
                phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at,
-               attendance_method, timezone, geofence_mode, attendance_network_mode, auto_absent_last_run_date)
+               attendance_method, timezone, geofence_mode, attendance_network_mode, auto_absent_last_run_date,
+               attendance_device_mode, attendance_device_auto_approve_first,
+               attendance_photo_mode, attendance_photo_retention_days)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
                        $23, COALESCE($24::varchar, 'Asia/Kuala_Lumpur'), COALESCE($25::varchar, 'none'),
-                       COALESCE($26::varchar, 'none'), $27)"#,
+                       COALESCE($26::varchar, 'none'), $27,
+                       COALESCE($28::varchar, 'none'), COALESCE($29::boolean, TRUE),
+                       COALESCE($30::varchar, 'none'), COALESCE($31::integer, 30))"#,
         id,
         c.name,
         c.registration_number,
@@ -616,6 +632,10 @@ pub async fn insert_company(
         c.geofence_mode,
         c.attendance_network_mode,
         c.auto_absent_last_run_date,
+        c.attendance_device_mode,
+        c.attendance_device_auto_approve_first,
+        c.attendance_photo_mode,
+        c.attendance_photo_retention_days,
     )
     .execute(executor)
     .await?;

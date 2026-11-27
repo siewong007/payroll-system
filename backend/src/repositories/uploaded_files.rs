@@ -82,6 +82,14 @@ pub async fn user_unreferenced_stats(
                  SELECT 1 FROM companies co
                  WHERE co.id = uf.company_id
                    AND co.logo_url = '/api/uploads/' || uf.stored_name
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM attendance_records ar
+                 WHERE ar.company_id = uf.company_id
+                   AND (
+                       ar.check_in_photo_url = '/api/uploads/' || uf.stored_name
+                       OR ar.check_out_photo_url = '/api/uploads/' || uf.stored_name
+                   )
              )"#,
         company_id,
         user_id,

@@ -40,6 +40,21 @@ pub struct AttendanceRecord {
     /// `None` means the network was never evaluated — the mode was off or only
     /// learning — which must stay distinguishable from "checked, and on-network".
     pub is_offsite_network: Option<bool>,
+    pub check_in_session_id: Option<Uuid>,
+    pub check_out_session_id: Option<Uuid>,
+    pub check_in_device_id: Option<Uuid>,
+    pub check_out_device_id: Option<Uuid>,
+    pub check_in_cookie_id: Option<Uuid>,
+    pub check_out_cookie_id: Option<Uuid>,
+    pub check_in_passkey_id: Option<Uuid>,
+    pub check_in_user_agent: Option<String>,
+    pub check_out_user_agent: Option<String>,
+    pub is_untrusted_device: Option<bool>,
+    pub anomaly_flags: Vec<String>,
+    pub check_in_photo_url: Option<String>,
+    pub check_out_photo_url: Option<String>,
+    pub check_in_photo_purged_at: Option<DateTime<Utc>>,
+    pub check_out_photo_purged_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -66,10 +81,30 @@ pub struct AttendanceRecordWithEmployee {
     pub overtime_hours: Option<rust_decimal::Decimal>,
     pub is_outside_geofence: Option<bool>,
     pub is_offsite_network: Option<bool>,
+    pub check_in_device_id: Option<Uuid>,
+    pub check_out_device_id: Option<Uuid>,
+    pub check_in_device_label: Option<String>,
+    pub check_out_device_label: Option<String>,
+    pub check_in_passkey_id: Option<Uuid>,
+    pub check_in_user_agent: Option<String>,
+    pub check_out_user_agent: Option<String>,
+    pub is_untrusted_device: Option<bool>,
+    pub anomaly_flags: Vec<String>,
+    pub check_in_photo_url: Option<String>,
+    pub check_out_photo_url: Option<String>,
+    pub check_in_photo_purged_at: Option<DateTime<Utc>>,
+    pub check_out_photo_purged_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
 // ─── Requests ───
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceProofRequest {
+    pub device_id: Uuid,
+    pub challenge_id: Uuid,
+    pub signature: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CheckInQrRequest {
@@ -77,6 +112,10 @@ pub struct CheckInQrRequest {
     pub token: String,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    #[serde(default)]
+    pub device_proof: Option<DeviceProofRequest>,
+    #[serde(default)]
+    pub photo_base64: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +127,23 @@ pub struct CheckInFaceIdRequest {
     pub credential: webauthn_rs::prelude::PublicKeyCredential,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    #[serde(default)]
+    pub device_proof: Option<DeviceProofRequest>,
+    #[serde(default)]
+    pub photo_base64: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CheckInQrFaceIdRequest {
+    pub token: String,
+    pub challenge_id: Uuid,
+    pub credential: webauthn_rs::prelude::PublicKeyCredential,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    #[serde(default)]
+    pub device_proof: Option<DeviceProofRequest>,
+    #[serde(default)]
+    pub photo_base64: Option<String>,
 }
 
 /// Response for `POST /attendance/check-in/face-id/begin`
@@ -101,6 +157,10 @@ pub struct FaceIdBeginResponse {
 pub struct CheckOutRequest {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    #[serde(default)]
+    pub device_proof: Option<DeviceProofRequest>,
+    #[serde(default)]
+    pub photo_base64: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +192,8 @@ pub struct AttendanceListQuery {
     /// per row, and without a predicate the only way to find these is to page
     /// through the whole list looking for the icon.
     pub offsite_network_only: Option<bool>,
+    /// Only records carrying one or more anti-buddy-punching anomaly flags.
+    pub flagged_only: Option<bool>,
     /// Page number (1-based, default 1)
     pub page: Option<i64>,
     /// Items per page (default 50, max 200)
@@ -248,6 +310,7 @@ pub struct AttendanceExportQuery {
     pub open_only: Option<bool>,
     pub outside_geofence_only: Option<bool>,
     pub offsite_network_only: Option<bool>,
+    pub flagged_only: Option<bool>,
 }
 
 /// Response for the effective attendance method of a company. Also carries the
@@ -263,6 +326,12 @@ pub struct AttendanceMethodResponse {
     /// "none" | "learn" | "warn" | "enforce". Lets the check-in screen say up
     /// front that office Wi-Fi is required, instead of only after a rejection.
     pub network_mode: String,
+    /// "none" | "warn" | "enforce"
+    pub device_mode: String,
+    pub device_auto_approve_first: bool,
+    /// "none" | "optional" | "required"
+    pub photo_mode: String,
+    pub photo_retention_days: i32,
     /// IANA timezone the company's attendance days are bucketed in
     pub timezone: String,
     /// Advisory default shift start time (`HH:MM:SS`) for employee check-in UI
@@ -276,4 +345,195 @@ pub struct AttendanceMethodResponse {
 pub struct AbsentRunRequest {
     /// Local calendar date (company timezone) to mark absences for
     pub date: NaiveDate,
+}
+
+// ─── Anti-Buddy-Punching: Device Binding, Kiosk Pass, Security & Anomalies ───
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AttendancePersonalQrToken {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub employee_id: Uuid,
+    pub user_id: Uuid,
+    pub token_hash: String,
+    pub action: String,
+    pub device_id: Option<Uuid>,
+    pub cookie_device_id: Option<Uuid>,
+    pub session_id: Option<Uuid>,
+    pub passkey_id: Option<Uuid>,
+    pub user_agent: Option<String>,
+    pub used: bool,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePersonalQrRequest {
+    /// Optional explicit action ("check_in" or "check_out"); inferred from open session if omitted.
+    pub action: Option<String>,
+    #[serde(default)]
+    pub device_proof: Option<DeviceProofRequest>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PersonalQrResponse {
+    pub token: String,
+    pub qr_payload: String,
+    pub action: String,
+    pub expires_at: DateTime<Utc>,
+    pub ttl_seconds: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KioskCheckInRequest {
+    pub personal_token: String,
+    #[serde(default)]
+    pub photo_base64: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KioskCheckInResponse {
+    pub action: String,
+    pub employee_name: String,
+    pub employee_number: String,
+    pub timestamp: DateTime<Utc>,
+    pub status: String,
+    pub photo_captured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AttendanceSecuritySettings {
+    pub device_mode: String,
+    pub device_auto_approve_first: bool,
+    pub photo_mode: String,
+    pub photo_retention_days: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateAttendanceSecuritySettingsRequest {
+    pub device_mode: Option<String>,
+    pub device_auto_approve_first: Option<bool>,
+    pub photo_mode: Option<String>,
+    pub photo_retention_days: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceChallengeRequest {
+    /// "check_in" | "check_out" | "personal_qr"
+    pub purpose: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceChallengeResponse {
+    pub challenge_id: Uuid,
+    pub nonce: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnrollDeviceRequest {
+    /// Base64url-encoded 65-byte uncompressed SEC1 P-256 public key
+    pub public_key_raw: String,
+    pub device_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct EmployeeAttendanceDevice {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub employee_id: Uuid,
+    pub user_id: Uuid,
+    pub public_key_raw: String,
+    pub public_key_fingerprint: String,
+    pub device_label: String,
+    pub user_agent: Option<String>,
+    pub cookie_device_id: Option<Uuid>,
+    pub status: String,
+    pub approved_by: Option<Uuid>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub revoked_by: Option<Uuid>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoke_reason: Option<String>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct EmployeeAttendanceDeviceWithEmployee {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub employee_id: Uuid,
+    pub employee_number: String,
+    pub full_name: String,
+    pub department: Option<String>,
+    pub device_label: String,
+    pub public_key_fingerprint: String,
+    pub user_agent: Option<String>,
+    pub status: String,
+    pub approved_by: Option<Uuid>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub revoked_by: Option<Uuid>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoke_reason: Option<String>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RevokeDeviceRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttendanceAnomaliesQuery {
+    pub date_from: Option<NaiveDate>,
+    pub date_to: Option<NaiveDate>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnomalyReportSummary {
+    pub flagged_records: i64,
+    pub shared_device_incidents: i64,
+    pub paired_clusters: i64,
+    pub pending_devices: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SharedDeviceEmployeeEntry {
+    pub employee_id: Uuid,
+    pub employee_number: String,
+    pub full_name: String,
+    pub check_in_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SharedDeviceEvent {
+    pub local_date: NaiveDate,
+    pub device_tag: String,
+    pub employee_count: i64,
+    pub employees: Vec<SharedDeviceEmployeeEntry>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PairedCheckInCluster {
+    pub employee_a_id: Uuid,
+    pub employee_a_number: String,
+    pub employee_a_name: String,
+    pub employee_b_id: Uuid,
+    pub employee_b_number: String,
+    pub employee_b_name: String,
+    pub paired_days: i64,
+    pub paired_checkout_days: i64,
+    pub co_located_days: i64,
+    pub avg_gap_seconds: i64,
+    pub last_paired_date: NaiveDate,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AttendanceAnomaliesReport {
+    pub date_from: NaiveDate,
+    pub date_to: NaiveDate,
+    pub summary: AnomalyReportSummary,
+    pub shared_device_events: Vec<SharedDeviceEvent>,
+    pub paired_checkins: Vec<PairedCheckInCluster>,
 }

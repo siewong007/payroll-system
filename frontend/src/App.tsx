@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/context/AuthProvider';
@@ -10,6 +10,7 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 import { PromptProvider } from '@/components/ui/PromptDialog';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { subscribeCommandPalette } from '@/lib/commandPalette';
 import { toast } from '@/lib/toast';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
 import { canUseAdminConsole, defaultAdminHome } from '@/lib/roles';
@@ -171,76 +172,35 @@ function RouteErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
 }
 
-function AuthenticatedCommandPalette() {
+function CommandPaletteHost() {
   const { isAuthenticated } = useAuth();
-  if (!isAuthenticated) return null;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated || mounted) return;
+    const unsub = subscribeCommandPalette(() => setMounted(true));
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setMounted(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      unsub();
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [isAuthenticated, mounted]);
+
+  if (!isAuthenticated || !mounted) return null;
   return (
     <Suspense fallback={null}>
-      <CommandPalette />
+      <CommandPalette defaultOpen />
     </Suspense>
   );
 }
 
-let didPrefetchInitialRoute = false;
-function prefetchInitialRoute() {
-  if (didPrefetchInitialRoute || typeof window === 'undefined') return;
-  didPrefetchInitialRoute = true;
-  const path = window.location.pathname;
-  if (path === '/login') {
-    void import('@/pages/auth/Login');
-    return;
-  }
-  if (path === '/terms' || path === '/privacy' || path === '/compliance') {
-    void import('@/pages/legal/LegalPage');
-    return;
-  }
-  if (path === '/kiosk' || path.startsWith('/kiosk/')) {
-    void import('@/pages/attendance/AttendanceKioskPublic');
-    return;
-  }
-  if (path.startsWith('/portal')) {
-    void import('@/components/layout/PortalLayout');
-    if (path === '/portal/attendance') void import('@/pages/portal/MyAttendance');
-    else if (path === '/portal/payslips') void import('@/pages/portal/MyPayslips');
-    else if (path === '/portal/leave') void import('@/pages/portal/Leave');
-    else if (path === '/portal/notifications') void import('@/pages/portal/Notifications');
-    else void import('@/pages/portal/MyProfile');
-    return;
-  }
-  try {
-    const rawUser = localStorage.getItem('user');
-    if (!rawUser) {
-      if (path === '/' || path === '') {
-        void import('@/pages/auth/Login');
-      }
-      return;
-    }
-    const parsed = JSON.parse(rawUser) as { roles?: string[] };
-    const roles = parsed.roles ?? [];
-    if (roles.length === 1 && roles[0] === 'employee') {
-      void import('@/components/layout/PortalLayout');
-      if (path === '/portal/notifications') void import('@/pages/portal/Notifications');
-      else void import('@/pages/portal/MyProfile');
-    } else {
-      void import('@/components/layout/AppLayout');
-      if (path === '/notifications') {
-        void import('@/pages/portal/Notifications');
-      } else if (roles.includes('super_admin')) {
-        void import('@/pages/admin/CompanyManagement');
-      } else if (path === '/' || path === '/dashboard') {
-        void import('@/pages/dashboard/DashboardPage');
-      }
-    }
-  } catch {
-    // Ignore malformed localStorage display user cache.
-  }
-}
-
 export default function App() {
-  useEffect(() => {
-    prefetchInitialRoute();
-  }, []);
-
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
@@ -251,7 +211,7 @@ export default function App() {
                 <ConfirmProvider>
                   <PromptProvider>
                     <OfflineBanner />
-                    <AuthenticatedCommandPalette />
+                    <CommandPaletteHost />
                     <RouteErrorBoundary>
                     <Suspense fallback={<RouteFallback />}>
                     <Routes>

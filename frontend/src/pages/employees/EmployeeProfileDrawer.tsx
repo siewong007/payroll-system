@@ -373,23 +373,23 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
               </div>
 
               {/* Desktop Table */}
-              <div className="hidden sm:block overflow-x-auto rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+              <div className="hidden sm:block overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--card)]">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 dark:bg-slate-800/70">
+                  <thead className="bg-[var(--surface-subtle)] border-b border-[var(--border)]">
                     <tr>
-                      <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
+                      <th className="text-left px-4 py-2 text-xs font-medium text-[var(--muted-foreground)] uppercase whitespace-nowrap">
                         {t('employees.salaryTable.date')}
                       </th>
-                      <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
+                      <th className="text-right px-4 py-2 text-xs font-medium text-[var(--muted-foreground)] uppercase whitespace-nowrap">
                         {t('employees.salaryTable.old')}
                       </th>
-                      <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
+                      <th className="text-right px-4 py-2 text-xs font-medium text-[var(--muted-foreground)] uppercase whitespace-nowrap">
                         {t('employees.salaryTable.new')}
                       </th>
-                      <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
+                      <th className="text-right px-4 py-2 text-xs font-medium text-[var(--muted-foreground)] uppercase whitespace-nowrap">
                         {t('employees.salaryTable.change')}
                       </th>
-                      <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">
+                      <th className="text-left px-4 py-2 text-xs font-medium text-[var(--muted-foreground)] uppercase">
                         {t('employees.salaryTable.reason')}
                       </th>
                     </tr>

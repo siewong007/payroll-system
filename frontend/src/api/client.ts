@@ -96,6 +96,7 @@ const NO_REFRESH_401_ENDPOINTS = [
   '/auth/passkey/discoverable/begin',
   '/auth/passkey/discoverable/complete',
   '/attendance/check-in/face-id',
+  '/attendance/check-in/qr-face-id',
 ];
 
 /**

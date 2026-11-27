@@ -21,7 +21,7 @@ export function PwaInstallBanner() {
     <div
       role="region"
       aria-label={t('pwa.banner.regionLabel')}
-      className="no-print mb-5 rounded-2xl border border-[var(--accent-1)]/20 bg-white/90 dark:bg-slate-900/90 px-3.5 py-2.5 sm:px-4 sm:py-3 shadow-sm flex flex-col sm:flex-row sm:items-center gap-3"
+      className="no-print mb-4 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3.5 py-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.03)] flex flex-col sm:flex-row sm:items-center gap-3"
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <img
@@ -29,13 +29,13 @@ export function PwaInstallBanner() {
           alt=""
           width={36}
           height={36}
-          className="h-9 w-9 rounded-xl shadow-xs shrink-0"
+          className="h-9 w-9 rounded-lg border border-[var(--border)] shrink-0"
         />
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate">
+          <p className="text-[13px] font-semibold text-[var(--foreground)] truncate">
             {t('pwa.banner.title')}
           </p>
-          <p className="text-xs text-gray-500 dark:text-slate-400">
+          <p className="text-xs text-[var(--muted-foreground)]">
             {canPromptInstall
               ? t('pwa.banner.subtitleInstallable')
               : t('pwa.banner.subtitleIos')}
@@ -47,7 +47,7 @@ export function PwaInstallBanner() {
         <button
           type="button"
           onClick={() => void triggerInstall()}
-          className="btn-primary !min-h-10 !py-2 !px-3.5 text-xs"
+          className="btn-primary !min-h-9 !py-1.5 !px-3 text-xs"
         >
           {canPromptInstall ? (
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
@@ -63,7 +63,7 @@ export function PwaInstallBanner() {
           type="button"
           onClick={dismissBanner}
           aria-label={t('pwa.banner.dismiss')}
-          className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+          className="min-h-9 min-w-9 inline-flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)] transition-colors"
         >
           <X className="h-4 w-4" aria-hidden="true" />
         </button>

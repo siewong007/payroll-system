@@ -5,6 +5,7 @@ import { i18nReady } from '@/i18n'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { initPwaListeners } from '@/lib/pwa'
+import { prefetchInitialRoute } from '@/lib/routePrefetch'
 
 // Apply stored theme before first paint (CSP forbids inline scripts in index.html).
 try {
@@ -16,13 +17,14 @@ try {
   const isDark = mode === 'dark' || (mode === 'system' && prefersDark)
   if (isDark) {
     document.documentElement.classList.add('dark')
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0b1120')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#09090b')
   }
 } catch {
   // Ignore storage access errors.
 }
 
 initPwaListeners()
+prefetchInitialRoute()
 
 // Wait for the single detected locale chunk before initial mount so the first
 // paint shows localized copy without preloading all four language bundles.

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH latest AS (\n               SELECT id\n               FROM attendance_qr_tokens\n               WHERE company_id = $1\n                 AND kiosk_credential_id = $2\n                 AND used = FALSE\n                 AND expires_at >= NOW()\n               ORDER BY created_at DESC\n               LIMIT 1\n           )\n           UPDATE attendance_qr_tokens t\n           SET used = CASE\n                   WHEN t.id IN (SELECT id FROM latest) THEN FALSE\n                   ELSE TRUE\n               END,\n               expires_at = CASE\n                   WHEN t.id IN (SELECT id FROM latest)\n                       THEN LEAST(t.expires_at, NOW() + make_interval(secs => $3::double precision))\n                   ELSE t.expires_at\n               END\n           WHERE t.company_id = $1\n             AND t.kiosk_credential_id = $2\n             AND t.used = FALSE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "973cf3f5a8704a642054c77d607acc92cdc7218f71d460bb6ed8d8d92c36e67f"
+}

@@ -92,22 +92,23 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
     return () => clearTimeout(timer);
   }, [isExpired, showQr, handleRefresh]);
 
-  const pct = token ? Math.max(0, (timeLeft / (token.ttl_seconds || 300)) * 100) : 0;
-  const ttlMinutes = token ? Math.round((token.ttl_seconds || 300) / 60) : 5;
+  const ttl = token?.ttl_seconds || 300;
+  const pct = token ? Math.max(0, (timeLeft / ttl) * 100) : 0;
+  const ttlMinutes = Math.round(ttl / 60);
 
   return (
     <div className="card p-5 sm:p-6 flex flex-col items-center gap-4">
       <div className="flex items-center justify-between w-full gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <QrCode className="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0" aria-hidden="true" />
-          <h2 className="font-semibold text-gray-900 dark:text-slate-100 truncate">{t('attendance.qrPanel.title')}</h2>
+          <QrCode className="w-5 h-5 text-[var(--accent-1)] shrink-0" aria-hidden="true" />
+          <h2 className="font-semibold text-[var(--foreground)] truncate">{t('attendance.qrPanel.title')}</h2>
         </div>
         {showQr && canGenerate && (
           <button
             type="button"
             onClick={handleRefresh}
             disabled={isFetching}
-            className="min-h-11 sm:min-h-9 flex items-center gap-1.5 text-xs font-medium text-gray-700 dark:text-slate-200 hover:text-gray-900 dark:hover:text-white bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 shrink-0"
+            className="min-h-11 sm:min-h-9 flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)] bg-[var(--surface-subtle)] border border-[var(--border)] hover:bg-[var(--border)]/40 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 shrink-0"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin' : ''}`} aria-hidden="true" />
             {t('common.refresh')}
@@ -116,21 +117,21 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
       </div>
 
       {!canGenerate ? (
-        <p className="text-sm text-gray-500 dark:text-slate-400 text-center py-4">
+        <p className="text-sm text-[var(--muted-foreground)] text-center py-4">
           {t('attendance.qrPanel.noPermission')}
         </p>
       ) : !showQr ? (
         <>
           <div className="w-full py-6 flex flex-col items-center gap-2 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-violet-50 dark:bg-violet-500/15 flex items-center justify-center">
-              <QrCode className="w-7 h-7 text-violet-500 dark:text-violet-400" aria-hidden="true" />
+            <div className="w-12 h-12 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center">
+              <QrCode className="w-6 h-6 text-[var(--accent-1)]" aria-hidden="true" />
             </div>
-            <p className="text-sm text-gray-500 dark:text-slate-400 px-2">{t('attendance.qrPanel.showHint')}</p>
+            <p className="text-sm text-[var(--muted-foreground)] px-2">{t('attendance.qrPanel.showHint')}</p>
           </div>
           <button
             type="button"
             onClick={() => setShowQr(true)}
-            className="btn-primary w-full rounded-xl"
+            className="btn-primary w-full rounded-lg"
           >
             <Eye className="w-4 h-4" aria-hidden="true" />
             {t('attendance.qrPanel.showButton')}
@@ -139,7 +140,7 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
       ) : isError ? (
         <div role="alert" className="w-full py-6 flex flex-col items-center gap-3 text-center">
           <AlertCircle className="w-8 h-8 text-red-500 dark:text-red-400" aria-hidden="true" />
-          <p className="text-sm text-gray-600 dark:text-slate-300">{t('attendance.qrPanel.generateFailed')}</p>
+          <p className="text-sm text-[var(--muted-foreground)]">{t('attendance.qrPanel.generateFailed')}</p>
           <button
             type="button"
             onClick={handleRefresh}
@@ -153,19 +154,19 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
         <div
           role="status"
           aria-label={t('common.loading')}
-          className="w-full max-w-[240px] aspect-square rounded-2xl bg-gray-100 dark:bg-slate-800 motion-safe:animate-pulse flex items-center justify-center"
+          className="w-full max-w-[240px] aspect-square rounded-xl bg-[var(--surface-subtle)] motion-safe:animate-pulse flex items-center justify-center"
         >
           <div className="spinner" />
         </div>
       ) : (
         <>
           {/* QR Canvas */}
-          <div className="relative w-full max-w-[264px] rounded-2xl bg-white border border-gray-200/80 dark:border-transparent p-3 shadow-xs">
+          <div className="relative w-full max-w-[264px] rounded-xl bg-white border border-[var(--border)] p-3">
             <canvas
               ref={canvasRef}
               role="img"
               aria-label={t('attendance.qrPanel.title')}
-              className={`block !w-full !h-auto max-w-[240px] aspect-square mx-auto rounded-xl transition-opacity ${
+              className={`block !w-full !h-auto max-w-[240px] aspect-square mx-auto rounded-lg transition-opacity ${
                 isExpired ? 'opacity-30' : 'opacity-100'
               }`}
             />
@@ -173,7 +174,7 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
               <div className="absolute inset-0 flex items-center justify-center">
                 <div
                   role="status"
-                  className="bg-white/95 dark:bg-slate-900/95 border border-gray-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm font-semibold text-gray-700 dark:text-slate-200 shadow-sm"
+                  className="bg-[var(--card)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm font-semibold text-[var(--foreground)] shadow-sm"
                 >
                   {t('attendance.qrPanel.refreshing')}
                 </div>
@@ -183,11 +184,11 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
 
           {/* Countdown */}
           <div className="w-full">
-            <div className="flex justify-between text-xs text-gray-500 dark:text-slate-400 mb-1">
+            <div className="flex justify-between text-xs text-[var(--muted-foreground)] mb-1">
               <span>{t('attendance.qrPanel.expiresIn')}</span>
               <span
                 className={`font-semibold tabular-nums ${
-                  timeLeft <= 10 ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-slate-200'
+                  timeLeft <= 10 ? 'text-red-600 dark:text-red-400' : 'text-[var(--foreground)]'
                 }`}
               >
                 {t('attendance.kiosk.secondsShort', { count: timeLeft })}
@@ -199,25 +200,27 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
               aria-valuemin={0}
               aria-valuemax={token.ttl_seconds || 300}
               aria-valuenow={timeLeft}
-              className="h-1.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden"
+              className="h-1.5 bg-[var(--surface-subtle)] rounded-full overflow-hidden"
             >
               <div
                 className={`h-full rounded-full transition-all ${
-                  timeLeft <= 10 ? 'bg-red-500' : 'bg-violet-500'
+                  timeLeft <= 10 ? 'bg-red-500' : 'bg-[var(--accent-1)]'
                 }`}
                 style={{ width: `${pct}%` }}
               />
             </div>
           </div>
 
-          <p className="text-xs text-gray-500 dark:text-slate-400 text-center">
-            {t('attendance.qrPanel.rotateNote', { minutes: ttlMinutes })}
+          <p className="text-xs text-[var(--muted-foreground)] text-center">
+            {ttl < 60
+              ? t('attendance.qrPanel.rotateNoteSeconds', { seconds: ttl })
+              : t('attendance.qrPanel.rotateNote', { minutes: ttlMinutes })}
           </p>
 
           <button
             type="button"
             onClick={() => setShowQr(false)}
-            className="min-h-11 sm:min-h-9 px-3 rounded-lg text-xs font-medium text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 flex items-center gap-1.5 transition-colors"
+            className="min-h-11 sm:min-h-9 px-3 rounded-lg text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--surface-subtle)] flex items-center gap-1.5 transition-colors"
           >
             <EyeOff className="w-3.5 h-3.5" aria-hidden="true" /> {t('attendance.qrPanel.hide')}
           </button>
@@ -228,7 +231,7 @@ export function QrPanel({ canGenerate, canManageKiosks = true }: { canGenerate: 
         <button
           type="button"
           onClick={() => setShowKiosks(true)}
-          className="btn-secondary w-full rounded-xl"
+          className="btn-secondary w-full rounded-lg"
         >
           <Link2 className="w-4 h-4" aria-hidden="true" />
           {t('attendance.kioskModal.title')}

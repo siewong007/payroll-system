@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,\n                latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,\n                created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,\n                created_at, updated_at\n         FROM attendance_records WHERE id = $1 AND company_id = $2\n         FOR UPDATE",
+  "query": "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,\n                latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,\n                created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,\n                check_in_session_id, check_out_session_id, check_in_device_id, check_out_device_id,\n                check_in_cookie_id, check_out_cookie_id, check_in_passkey_id,\n                check_in_user_agent, check_out_user_agent, is_untrusted_device, anomaly_flags,\n                check_in_photo_url, check_out_photo_url, check_in_photo_purged_at, check_out_photo_purged_at,\n                created_at, updated_at\n         FROM attendance_records\n         WHERE employee_id = $1\n           AND check_in_at >= date_trunc('day', NOW() AT TIME ZONE $2) AT TIME ZONE $2\n           AND check_in_at < (date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day') AT TIME ZONE $2\n         ORDER BY check_in_at DESC\n         LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -203,6 +203,171 @@
       },
       {
         "ordinal": 18,
+        "name": "check_in_session_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "check_out_session_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "check_in_device_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_device_id"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "check_out_device_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_device_id"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "check_in_cookie_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_cookie_id"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "check_out_cookie_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_cookie_id"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "check_in_passkey_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_passkey_id"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "check_in_user_agent",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_user_agent"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "check_out_user_agent",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_user_agent"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "is_untrusted_device",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "is_untrusted_device"
+          }
+        }
+      },
+      {
+        "ordinal": 28,
+        "name": "anomaly_flags",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "anomaly_flags"
+          }
+        }
+      },
+      {
+        "ordinal": 29,
+        "name": "check_in_photo_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_photo_url"
+          }
+        }
+      },
+      {
+        "ordinal": 30,
+        "name": "check_out_photo_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_photo_url"
+          }
+        }
+      },
+      {
+        "ordinal": 31,
+        "name": "check_in_photo_purged_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_photo_purged_at"
+          }
+        }
+      },
+      {
+        "ordinal": 32,
+        "name": "check_out_photo_purged_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_photo_purged_at"
+          }
+        }
+      },
+      {
+        "ordinal": 33,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -213,7 +378,7 @@
         }
       },
       {
-        "ordinal": 19,
+        "ordinal": 34,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -227,7 +392,7 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid"
+        "Text"
       ]
     },
     "nullable": [
@@ -249,9 +414,24 @@
       true,
       true,
       true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
       false,
       false
     ]
   },
-  "hash": "28e987ad96a4ca082cc75e8a6afb568e7ad6922704776e11569ba5884c0196e9"
+  "hash": "332b6b095db817379f691608afd6910a188905a07e598ee2ad3501930c53f0e1"
 }

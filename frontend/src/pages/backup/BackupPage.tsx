@@ -200,7 +200,7 @@ export function BackupPage() {
       {isSuperAdmin && companiesError && (
         <div
           role="alert"
-          className="p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/25 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-sm text-red-700 dark:text-red-300"
+          className="p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/25 rounded-xl flex flex-wrap items-center justify-between gap-3 text-sm text-red-700 dark:text-red-300"
         >
           <div className="flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />

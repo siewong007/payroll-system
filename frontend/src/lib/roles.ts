@@ -16,14 +16,14 @@ export interface RoleMeta {
  * than a role that silently renders as a raw identifier.
  */
 export const ROLE_META: Record<AppRole, RoleMeta> = {
-  super_admin: { badgeClass: 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300' },
-  admin: { badgeClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300' },
-  manager: { badgeClass: 'bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-300' },
-  payroll_admin: { badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300' },
-  hr_manager: { badgeClass: 'bg-green-100 text-green-700 dark:bg-emerald-500/20 dark:text-emerald-300' },
-  finance: { badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' },
-  exec: { badgeClass: 'bg-gray-100 text-gray-700 dark:bg-slate-700/70 dark:text-slate-200' },
-  employee: { badgeClass: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' },
+  super_admin: { badgeClass: 'bg-zinc-900 text-white border border-zinc-900 dark:bg-zinc-100 dark:text-zinc-950 dark:border-zinc-100' },
+  admin: { badgeClass: 'bg-[#1B2E4B]/10 text-[#1B2E4B] border border-[#1B2E4B]/20 dark:bg-[#93B4DC]/15 dark:text-[#93B4DC] dark:border-[#93B4DC]/25' },
+  manager: { badgeClass: 'bg-zinc-100 text-zinc-800 border border-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700' },
+  payroll_admin: { badgeClass: 'bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-500/12 dark:text-blue-300 dark:border-blue-500/25' },
+  hr_manager: { badgeClass: 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/12 dark:text-emerald-300 dark:border-emerald-500/25' },
+  finance: { badgeClass: 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/25' },
+  exec: { badgeClass: 'bg-zinc-100 text-zinc-700 border border-zinc-200 dark:bg-zinc-800/80 dark:text-zinc-300 dark:border-zinc-700' },
+  employee: { badgeClass: 'bg-sky-50 text-sky-800 border border-sky-200 dark:bg-sky-500/12 dark:text-sky-300 dark:border-sky-500/25' },
 };
 
 export const ALL_ROLES: AppRole[] = Object.keys(ROLE_META) as AppRole[];

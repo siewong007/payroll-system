@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -50,7 +50,9 @@ import { PayrollLifecycleStepper } from './PayrollLifecycleStepper';
 import type { JournalPreview } from '@/types';
 import type { TFunction } from 'i18next';
 import i18n from '@/i18n';
-import { PayslipBreakdownDrawer } from './PayslipBreakdownDrawer';
+const PayslipBreakdownDrawer = lazy(() =>
+  import('./PayslipBreakdownDrawer').then((m) => ({ default: m.PayslipBreakdownDrawer }))
+);
 import type { PayrollRun, PayrollSummary } from '@/types';
 
 const canDeletePayrollRun = (run: PayrollRun) =>
@@ -245,13 +247,13 @@ export function PayrollDetail() {
           breadcrumbs={baseBreadcrumbs}
         />
         <div role="status" aria-busy="true" aria-label={t('common.loading')} className="space-y-6">
-          <Skeleton className="h-16 w-full rounded-2xl" />
+          <Skeleton className="h-16 w-full rounded-xl" />
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[0, 1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-20 w-full rounded-2xl" />
+              <Skeleton key={i} className="h-20 w-full rounded-xl" />
             ))}
           </div>
-          <Skeleton className="h-72 w-full rounded-2xl" />
+          <Skeleton className="h-72 w-full rounded-xl" />
         </div>
       </div>
     );
@@ -823,11 +825,13 @@ export function PayrollDetail() {
       <CalculationProvenance snapshot={data.calculation_snapshot} />
 
       {breakdownEmployeeId && (
-        <PayslipBreakdownDrawer
-          runId={id!}
-          employeeId={breakdownEmployeeId}
-          onClose={() => setBreakdownEmployeeId(null)}
-        />
+        <Suspense fallback={null}>
+          <PayslipBreakdownDrawer
+            runId={id!}
+            employeeId={breakdownEmployeeId}
+            onClose={() => setBreakdownEmployeeId(null)}
+          />
+        </Suspense>
       )}
 
       <Modal
@@ -1037,7 +1041,7 @@ function PayrollAuditTimeline({
 
 function getAuditActionClass(action: string) {
   const classes: Record<string, string> = {
-    process: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300',
+    process: 'bg-[var(--surface-subtle)] text-[var(--foreground)] border border-[var(--border)]',
     approve: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
     self_approval_override: 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
     submit_approval: 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300',

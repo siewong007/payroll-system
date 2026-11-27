@@ -168,6 +168,7 @@ async fn upload_attach_rejects_cross_company_and_other_users_unreferenced_upload
         can_view_approvals: true,
         can_view_documents: true,
         can_view_confidential: true,
+        can_view_attendance: true,
     };
     upload_service::ensure_upload_attach_authorized(&pool, &access_a1, Some(&file_url), false)
         .await
@@ -180,6 +181,7 @@ async fn upload_attach_rejects_cross_company_and_other_users_unreferenced_upload
         can_view_approvals: false,
         can_view_documents: false,
         can_view_confidential: false,
+        can_view_attendance: false,
     };
     let same_company_idor =
         upload_service::ensure_upload_attach_authorized(&pool, &access_a2, Some(&file_url), false)
@@ -194,6 +196,7 @@ async fn upload_attach_rejects_cross_company_and_other_users_unreferenced_upload
         can_view_approvals: true,
         can_view_documents: true,
         can_view_confidential: true,
+        can_view_attendance: true,
     };
     let cross_company_idor =
         upload_service::ensure_upload_attach_authorized(&pool, &access_b1, Some(&file_url), false)
@@ -398,6 +401,7 @@ async fn portal_create_claim_rejects_zero_and_negative_amounts() {
         can_view_approvals: false,
         can_view_documents: false,
         can_view_confidential: false,
+        can_view_attendance: false,
     };
 
     for invalid_amount in [0_i64, -500_i64] {
@@ -446,6 +450,7 @@ async fn company_and_team_updates_clear_optional_text_and_unpaid_leave_divisor()
         can_view_approvals: true,
         can_view_documents: true,
         can_view_confidential: true,
+        can_view_attendance: true,
     };
     let updated_company = company_service::update_company(
         &pool,

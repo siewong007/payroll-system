@@ -92,55 +92,55 @@ export function InstallAppModal() {
         </div>
       }
     >
-      <div className="space-y-5">
-        <div className="flex items-center gap-3.5 rounded-xl bg-slate-50/90 dark:bg-slate-800/70 p-3.5 ring-1 ring-slate-200/70 dark:ring-slate-700/60">
+      <div className="space-y-4">
+        <div className="flex items-center gap-3 rounded-lg bg-[var(--surface-subtle)] p-3 border border-[var(--border)]">
           <img
             src="/icons/icon-192.png"
             alt=""
-            width={52}
-            height={52}
-            className="h-13 w-13 rounded-2xl shadow-sm shrink-0"
+            width={44}
+            height={44}
+            className="h-11 w-11 rounded-lg border border-[var(--border)] shrink-0"
           />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">
+            <p className="text-[13px] font-semibold text-[var(--foreground)]">
               {t('pwa.installModal.appTitle')}
             </p>
-            <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+            <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
               {t('pwa.installModal.subtitle')}
             </p>
           </div>
         </div>
 
         {isStandalone ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 dark:border-emerald-500/30 dark:bg-emerald-500/10 p-4 space-y-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 dark:bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 dark:border-emerald-500/30 dark:bg-emerald-500/10 p-3.5 space-y-1.5">
+            <span className="badge badge-approved gap-1">
+              <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
               {t('pwa.installModal.installedBadge')}
             </span>
-            <p className="text-sm text-emerald-800 dark:text-emerald-200">
+            <p className="text-[13px] text-emerald-800 dark:text-emerald-200">
               {t('pwa.installModal.installedDesc')}
             </p>
           </div>
         ) : canPromptInstall ? (
           <div className="space-y-4">
-            <ul className="space-y-2.5 text-sm text-gray-600 dark:text-slate-300">
+            <ul className="space-y-2 text-[13px] text-[var(--muted-foreground)]">
               <li className="flex items-start gap-2.5">
                 <CheckCircle2
-                  className="h-4 w-4 mt-0.5 text-emerald-500 shrink-0"
+                  className="h-4 w-4 mt-0.5 text-emerald-600 dark:text-emerald-400 shrink-0"
                   aria-hidden="true"
                 />
                 <span>{t('pwa.installModal.benefitHomeScreen')}</span>
               </li>
               <li className="flex items-start gap-2.5">
                 <CheckCircle2
-                  className="h-4 w-4 mt-0.5 text-emerald-500 shrink-0"
+                  className="h-4 w-4 mt-0.5 text-emerald-600 dark:text-emerald-400 shrink-0"
                   aria-hidden="true"
                 />
                 <span>{t('pwa.installModal.benefitFullscreen')}</span>
               </li>
               <li className="flex items-start gap-2.5">
                 <CheckCircle2
-                  className="h-4 w-4 mt-0.5 text-emerald-500 shrink-0"
+                  className="h-4 w-4 mt-0.5 text-emerald-600 dark:text-emerald-400 shrink-0"
                   aria-hidden="true"
                 />
                 <span>{t('pwa.installModal.benefitNotifications')}</span>
@@ -157,32 +157,32 @@ export function InstallAppModal() {
             </button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {platform === 'ios-other' && (
-              <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/90 dark:border-amber-500/30 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+              <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50/90 dark:border-amber-500/30 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
                 <Info className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
                 <span>{t('pwa.installModal.iosSafariTip')}</span>
               </div>
             )}
 
-            <ol className="space-y-3">
+            <ol className="space-y-2.5">
               {steps.map((step) => (
                 <li
                   key={step.num}
-                  className="flex items-start gap-3 rounded-xl border border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 p-3"
+                  className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)] p-3"
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-xs font-bold text-[var(--accent-1)]">
+                  <span className="section-number">
                     {step.num}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-slate-100">
+                    <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--foreground)]">
                       <step.icon
                         className="h-4 w-4 text-[var(--accent-1)] shrink-0"
                         aria-hidden="true"
                       />
                       <span>{t(step.titleKey)}</span>
                     </div>
-                    <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">
+                    <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
                       {t(step.descKey)}
                     </p>
                   </div>

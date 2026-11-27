@@ -121,6 +121,14 @@ pub struct CompanyExport {
     pub attendance_network_mode: Option<String>,
     #[serde(default)]
     pub auto_absent_last_run_date: Option<NaiveDate>,
+    #[serde(default)]
+    pub attendance_device_mode: Option<String>,
+    #[serde(default)]
+    pub attendance_device_auto_approve_first: Option<bool>,
+    #[serde(default)]
+    pub attendance_photo_mode: Option<String>,
+    #[serde(default)]
+    pub attendance_photo_retention_days: Option<i32>,
 }
 
 fn default_unpaid_break_minutes() -> i32 {

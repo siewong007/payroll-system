@@ -66,7 +66,7 @@ export function EaFormTab({
     return (
       <div role="status" aria-busy="true" aria-label={t('common.loading')} className="space-y-3">
         {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-16 w-full rounded-2xl" />
+          <Skeleton key={i} className="h-16 w-full rounded-xl" />
         ))}
       </div>
     );

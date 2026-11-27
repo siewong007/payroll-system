@@ -11,19 +11,19 @@ interface EmptyStateProps {
 
 export function EmptyState({ icon: Icon, title, description, action, compact = false }: EmptyStateProps) {
   return (
-    <div className={`flex flex-col items-center justify-center text-center ${compact ? 'py-8 px-4' : 'py-12 px-6'}`}>
+    <div className={`flex flex-col items-center justify-center text-center ${compact ? 'py-7 px-4' : 'py-10 px-6'}`}>
       {Icon && (
-        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-1)]">
-          <Icon className="h-6 w-6" aria-hidden="true" />
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface-subtle)] text-[var(--muted-foreground)]">
+          <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
       )}
-      <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">{title}</p>
+      <p className="text-[13px] font-semibold text-[var(--foreground)]">{title}</p>
       {description && (
-        <p className="mt-1 max-w-sm text-xs leading-relaxed text-gray-500 dark:text-slate-400">
+        <p className="mt-1 max-w-sm text-xs leading-relaxed text-[var(--muted-foreground)]">
           {description}
         </p>
       )}
-      {action && <div className="mt-4">{action}</div>}
+      {action && <div className="mt-3.5">{action}</div>}
     </div>
   );
 }

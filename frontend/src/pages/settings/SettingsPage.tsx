@@ -213,7 +213,7 @@ export function SettingsPage() {
           onSelect={(id) => { void handleSelectSection(id); }}
         />
 
-        <div key={active} className="mt-4 lg:mt-0 animate-fade-up">
+        <div className="mt-4 lg:mt-0">
           {isWorkspace ? (
             <CompanyCategorySection
               title={t(`settings.sections.${active}.label`, { defaultValue: active })}

@@ -153,7 +153,7 @@ function HistoryList({
                         )}
                       </span>
                     ) : isActiveSession ? (
-                      <span className="text-xs text-teal-600 dark:text-teal-400 font-medium flex items-center gap-1">
+                      <span className="text-xs text-[var(--accent-1)] font-medium flex items-center gap-1">
                         <Clock className="w-3 h-3 shrink-0" aria-hidden="true" /> {t('portal.myAttendance.inProgress')}
                       </span>
                     ) : (
@@ -209,7 +209,7 @@ function HistoryList({
                   href={`https://maps.google.com/?q=${r.checkout_latitude},${r.checkout_longitude}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="min-h-11 sm:min-h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-medium text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-500/15 hover:bg-teal-100 dark:hover:bg-teal-500/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  className="min-h-11 sm:min-h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-medium text-[var(--accent-1)] bg-[var(--accent-soft)] hover:opacity-85 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                   title={t('portal.myAttendance.viewCheckoutLocation')}
                   aria-label={t('portal.myAttendance.viewCheckoutLocation')}
                 >

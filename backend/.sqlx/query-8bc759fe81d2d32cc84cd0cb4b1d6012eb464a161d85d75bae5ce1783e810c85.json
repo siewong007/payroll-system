@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_device_challenges\n           WHERE id = $1\n             AND company_id = $2\n             AND user_id = $3\n             AND purpose = $4\n             AND expires_at >= NOW()\n           RETURNING nonce",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nonce",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_device_challenges",
+            "name": "nonce"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8bc759fe81d2d32cc84cd0cb4b1d6012eb464a161d85d75bae5ce1783e810c85"
+}

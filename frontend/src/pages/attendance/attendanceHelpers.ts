@@ -1,4 +1,4 @@
-import { QrCode, Fingerprint, User } from 'lucide-react';
+import { QrCode, Fingerprint, User, ShieldCheck, Camera } from 'lucide-react';
 import i18n, { intlLocale } from '@/i18n';
 import {
   formatTime as formatTimeL,
@@ -40,16 +40,18 @@ export function firstOfMonth(day: string): string {
 }
 
 export const STATUS_COLORS = {
-  present: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
-  late: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
-  absent: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300',
-  half_day: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300',
+  present: 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/12 dark:text-emerald-300 dark:border-emerald-500/25',
+  late: 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/25',
+  absent: 'bg-red-50 text-red-800 border border-red-200 dark:bg-red-500/12 dark:text-red-300 dark:border-red-500/25',
+  half_day: 'bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-500/12 dark:text-blue-300 dark:border-blue-500/25',
 } as const;
 
 export const METHOD_CONFIG = {
-  qr_code: { icon: QrCode, color: 'text-violet-600 dark:text-violet-400' },
+  qr_code: { icon: QrCode, color: 'text-[var(--accent-1)]' },
   face_id: { icon: Fingerprint, color: 'text-sky-600 dark:text-sky-400' },
-  manual: { icon: User, color: 'text-gray-500 dark:text-slate-400' },
+  qr_and_face_id: { icon: ShieldCheck, color: 'text-emerald-600 dark:text-emerald-400' },
+  kiosk_photo: { icon: Camera, color: 'text-amber-600 dark:text-amber-400' },
+  manual: { icon: User, color: 'text-[var(--muted-foreground)]' },
 } as const;
 
 export function attStatusLabel(status: string): string {

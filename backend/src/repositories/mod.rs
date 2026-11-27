@@ -9,8 +9,10 @@
 //!   row. Mapping absence to `NotFound`/`Conflict` is the service's job.
 //! - All SQL lives here; handlers and services never embed `sqlx::query*` directly.
 
+pub mod attendance_device_challenges;
 pub mod attendance_kiosk_credentials;
 pub mod attendance_network_observations;
+pub mod attendance_personal_qr_tokens;
 pub mod attendance_qr_tokens;
 pub mod attendance_records;
 pub mod audit_logs;
@@ -28,6 +30,7 @@ pub mod documents;
 pub mod eis_rates;
 pub mod email_logs;
 pub mod email_templates;
+pub mod employee_attendance_devices;
 pub mod employee_work_schedules;
 pub mod employees;
 pub mod epf_rates;

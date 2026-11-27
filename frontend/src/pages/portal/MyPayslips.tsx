@@ -101,9 +101,9 @@ export function MyPayslips() {
           <Skeleton className="h-3 w-full rounded-full" />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <Skeleton className="h-72 w-full rounded-2xl" />
-          <Skeleton className="h-72 w-full rounded-2xl" />
-          <Skeleton className="h-72 w-full rounded-2xl md:col-span-2 lg:col-span-1" />
+          <Skeleton className="h-72 w-full rounded-xl" />
+          <Skeleton className="h-72 w-full rounded-xl" />
+          <Skeleton className="h-72 w-full rounded-xl md:col-span-2 lg:col-span-1" />
         </div>
       </div>
     );
@@ -235,7 +235,7 @@ export function MyPayslips() {
                   onClick={() => setSelectedPeriod({ year: p.period_year, month: p.period_month })}
                   className={`min-h-11 sm:min-h-8 inline-flex items-center shrink-0 rounded-full px-3 py-1 text-xs font-semibold tabular-nums transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                     active
-                      ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-xs'
+                      ? 'bg-[var(--accent-1)] text-white'
                       : 'bg-white/80 dark:bg-slate-900/80 text-gray-600 dark:text-slate-300 ring-1 ring-gray-200/70 dark:ring-slate-800 hover:text-gray-900 dark:hover:text-white'
                   }`}
                 >
@@ -338,7 +338,7 @@ function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: Empl
           </div>
           <div>
             <p className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('ux.payslips.employerContributions')}</p>
-            <p className="mt-1 text-xl font-bold tabular-nums text-teal-700 dark:text-teal-300">
+            <p className="mt-1 text-xl font-bold tabular-nums text-[var(--accent-1)]">
               {formatMYR(employerStatutoryTotal)}
             </p>
             <p className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
@@ -353,7 +353,7 @@ function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: Empl
           className="h-3 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800 flex no-print"
         >
           <div
-            className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
+            className="h-full bg-[var(--accent-1)] transition-all duration-300"
             style={{ width: `${netPct}%` }}
           />
           <div

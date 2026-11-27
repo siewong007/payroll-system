@@ -41,7 +41,7 @@ export function CompanyCategorySection({
         ))}
       </div>
       {dirtyCount > 0 && (
-        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 rounded-b-2xl border-t border-gray-200/80 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 rounded-b-xl border-t border-[var(--border)] bg-[var(--card)]">
           <span className="text-sm text-gray-600 dark:text-slate-300">
             {t('settings.unsavedChanges', { count: dirtyCount })}
           </span>
@@ -212,7 +212,7 @@ function SettingField({
           <span
             aria-hidden="true"
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              value ? 'bg-black dark:bg-[var(--accent-1)]' : 'bg-gray-300 dark:bg-slate-600'
+              value ? 'bg-[var(--accent-1)]' : 'bg-zinc-300 dark:bg-zinc-700'
             }`}
           >
             <span

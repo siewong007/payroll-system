@@ -32,7 +32,7 @@ export function PayrollPreviewPanel({
   return (
     <div className="space-y-6">
       <div
-        className={`rounded-2xl border p-4 ${
+        className={`rounded-xl border p-4 ${
           preview.can_process
             ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30'
             : 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30'
@@ -238,7 +238,7 @@ function DiagnosticList({
   const Icon = tone === 'error' ? AlertTriangle : Info;
 
   return (
-    <div className={`rounded-2xl border p-4 ${styles.box}`}>
+    <div className={`rounded-xl border p-4 ${styles.box}`}>
       <div className={`mb-2 flex items-center gap-2 font-medium ${styles.heading}`}>
         <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
         {title} ({diagnostics.length})

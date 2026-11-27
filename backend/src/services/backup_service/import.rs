@@ -32,7 +32,9 @@ const NETWORK_MODES: [&str; 4] = ["none", "learn", "warn", "enforce"];
 
 /// `companies.attendance_method` values permitted by
 /// `companies_attendance_method_check`. NULL is also legal (nothing configured).
-const ATTENDANCE_METHODS: [&str; 2] = ["qr_code", "face_id"];
+const ATTENDANCE_METHODS: [&str; 3] = ["qr_code", "face_id", "qr_and_face_id"];
+const DEVICE_MODES: [&str; 3] = ["none", "warn", "enforce"];
+const PHOTO_MODES: [&str; 3] = ["none", "optional", "required"];
 
 /// The canonical spelling of `value` if it is one of `allowed`, else `None`.
 ///
@@ -329,9 +331,36 @@ fn sanitize_attendance_config(backup: &mut CompanyBackup, warnings: &mut Vec<Str
         && sanitize_choice(stored, &ATTENDANCE_METHODS).is_none()
     {
         warnings.push(format!(
-            "Backup attendance method \"{stored}\" is not one of qr_code/face_id; the restored company has no attendance method set."
+            "Backup attendance method \"{stored}\" is not one of qr_code/face_id/qr_and_face_id; the restored company has no attendance method set."
         ));
         company.attendance_method = None;
+    }
+
+    if let Some(stored) = company.attendance_device_mode.as_deref()
+        && sanitize_choice(stored, &DEVICE_MODES).is_none()
+    {
+        warnings.push(format!(
+            "Backup attendance device mode \"{stored}\" is not one of none/warn/enforce; device binding is left off on the restored company."
+        ));
+        company.attendance_device_mode = Some("none".to_owned());
+    }
+
+    if let Some(stored) = company.attendance_photo_mode.as_deref()
+        && sanitize_choice(stored, &PHOTO_MODES).is_none()
+    {
+        warnings.push(format!(
+            "Backup attendance photo mode \"{stored}\" is not one of none/optional/required; photo audit is left off on the restored company."
+        ));
+        company.attendance_photo_mode = Some("none".to_owned());
+    }
+
+    if let Some(days) = company.attendance_photo_retention_days
+        && !(7..=90).contains(&days)
+    {
+        warnings.push(format!(
+            "Backup attendance photo retention ({days} days) is out of range (7–90); reset to 30 days."
+        ));
+        company.attendance_photo_retention_days = Some(30);
     }
 
     for schedule in &mut backup.company_work_schedules {
@@ -1326,7 +1355,7 @@ mod tests {
             assert_eq!(sanitize_choice(rejected, &GEOFENCE_MODES), None);
         }
 
-        for method in ["qr_code", "face_id"] {
+        for method in ["qr_code", "face_id", "qr_and_face_id"] {
             assert_eq!(sanitize_choice(method, &ATTENDANCE_METHODS), Some(method));
         }
         for rejected in ["qr", "faceid", "FACE_ID", ""] {

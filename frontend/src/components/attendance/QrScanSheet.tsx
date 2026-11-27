@@ -316,12 +316,12 @@ export function QrScanSheet({ onClose, onToken, onRetryScan, onCameraReady, busy
         {phase === 'scanning' && !busy && (
           <div aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div className="relative w-[72vmin] max-w-[20rem] aspect-square">
-              {['top-0 left-0 border-t-4 border-l-4 rounded-tl-3xl',
-                'top-0 right-0 border-t-4 border-r-4 rounded-tr-3xl',
-                'bottom-0 left-0 border-b-4 border-l-4 rounded-bl-3xl',
-                'bottom-0 right-0 border-b-4 border-r-4 rounded-br-3xl',
+              {['top-0 left-0 border-t-4 border-l-4 rounded-tl-xl',
+                'top-0 right-0 border-t-4 border-r-4 rounded-tr-xl',
+                'bottom-0 left-0 border-b-4 border-l-4 rounded-bl-xl',
+                'bottom-0 right-0 border-b-4 border-r-4 rounded-br-xl',
               ].map((corner) => (
-                <span key={corner} className={`absolute w-10 h-10 border-emerald-400 ${corner}`} />
+                <span key={corner} className={`absolute w-9 h-9 border-emerald-400 ${corner}`} />
               ))}
             </div>
           </div>
@@ -329,8 +329,8 @@ export function QrScanSheet({ onClose, onToken, onRetryScan, onCameraReady, busy
 
         {/* Submitting */}
         {busy && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm">
-            <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85">
+            <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
             <p className="text-sm font-medium">{t('attendance.qr.checkingIn')}</p>
           </div>
         )}
@@ -339,7 +339,7 @@ export function QrScanSheet({ onClose, onToken, onRetryScan, onCameraReady, busy
       {/* Footer */}
       <div className="shrink-0 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-3">
         {message && (
-          <div role="alert" className="flex items-start justify-between gap-2 rounded-2xl bg-red-500/20 border border-red-500/40 px-4 py-3 text-sm text-red-100">
+          <div role="alert" className="flex items-start justify-between gap-2 rounded-xl bg-red-500/20 border border-red-500/40 px-4 py-3 text-sm text-red-100">
             <div className="flex items-start gap-2 min-w-0">
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{message}</span>

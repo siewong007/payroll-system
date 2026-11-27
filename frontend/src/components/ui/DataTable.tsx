@@ -168,11 +168,18 @@ export function DataTable<T>({
     });
   };
 
-  const selectedKeySet = new Set(selectedRowKeys);
-  const selectableDisplayKeys = selectable
-    ? displayData.flatMap((row, index) => ((isRowSelectable?.(row) ?? true) ? [getKey(row, index)] : []))
-    : [];
-  const selectedDisplayCount = selectableDisplayKeys.filter((key) => selectedKeySet.has(key)).length;
+  const selectedKeySet = useMemo(() => new Set(selectedRowKeys), [selectedRowKeys]);
+  const selectableDisplayKeys = useMemo(
+    () =>
+      selectable
+        ? displayData.flatMap((row, index) => ((isRowSelectable?.(row) ?? true) ? [getKey(row, index)] : []))
+        : [],
+    [displayData, getKey, isRowSelectable, selectable],
+  );
+  const selectedDisplayCount = useMemo(
+    () => selectableDisplayKeys.filter((key) => selectedKeySet.has(key)).length,
+    [selectableDisplayKeys, selectedKeySet],
+  );
   const hasSelectableRows = selectableDisplayKeys.length > 0;
   const allDisplayRowsSelected = hasSelectableRows && selectedDisplayCount === selectableDisplayKeys.length;
   const someDisplayRowsSelected = selectedDisplayCount > 0 && !allDisplayRowsSelected;
@@ -229,12 +236,16 @@ export function DataTable<T>({
     ? resolvedSummaryTitle(selectedRow)
     : (resolvedSummaryTitle as string);
 
-  const primaryColumns = columns.filter((col) => col.primary);
-  const secondaryColumns = columns.filter((col) => !col.primary);
-  const mobilePrimary = primaryColumns.length > 0 ? primaryColumns : columns.slice(0, 2);
-  const mobileSecondary = primaryColumns.length > 0 ? secondaryColumns : columns.slice(2);
+  const { mobilePrimary, mobileSecondary } = useMemo(() => {
+    const primaryCols = columns.filter((col) => col.primary);
+    const secondaryCols = columns.filter((col) => !col.primary);
+    return {
+      mobilePrimary: primaryCols.length > 0 ? primaryCols : columns.slice(0, 2),
+      mobileSecondary: primaryCols.length > 0 ? secondaryCols : columns.slice(2),
+    };
+  }, [columns]);
 
-  const getPageNumbers = (): (number | 'ellipsis')[] => {
+  const pageNumbers = useMemo<(number | 'ellipsis')[]>(() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const pages: (number | 'ellipsis')[] = [1];
     if (safePage > 3) pages.push('ellipsis');
@@ -244,10 +255,13 @@ export function DataTable<T>({
     if (safePage < totalPages - 2) pages.push('ellipsis');
     if (totalPages > 1) pages.push(totalPages);
     return pages;
-  };
+  }, [safePage, totalPages]);
 
   const skeletonRows = Math.min(perPage, 5);
-  const sortableColumns = !isServerSide ? columns.filter((c) => Boolean(c.sortValue)) : [];
+  const sortableColumns = useMemo(
+    () => (!isServerSide ? columns.filter((c) => Boolean(c.sortValue)) : []),
+    [columns, isServerSide],
+  );
   const mobileSortValue = sortState ? `${sortState.key}:${sortState.dir}` : '';
   const handleMobileSortChange = (raw: string) => {
     if (!raw) {
@@ -264,21 +278,21 @@ export function DataTable<T>({
 
   return (
     <>
-      <div className="card !p-0 overflow-hidden">
+      <div className="surface-panel overflow-hidden">
         {!isDesktop ? (
         /* Mobile card view */
         <div className="md:hidden">
           {!isLoading && (selectable || sortableColumns.length > 0) && displayData.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50/80 dark:bg-slate-900/60 px-4 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--surface-subtle)] px-4 py-2">
               {selectable ? (
-                <label className="inline-flex min-h-11 items-center gap-2.5 text-xs font-medium text-gray-700 dark:text-slate-200 cursor-pointer">
+                <label className="inline-flex min-h-11 items-center gap-2.5 text-xs font-medium text-[var(--foreground)] cursor-pointer">
                   <input
                     ref={selectAllRef}
                     type="checkbox"
                     checked={allDisplayRowsSelected}
                     disabled={!hasSelectableRows}
                     onChange={toggleDisplaySelection}
-                    className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
+                    className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
                     aria-label={t('common.selectAll')}
                   />
                   <span>{t('common.selectAll')}</span>
@@ -291,7 +305,7 @@ export function DataTable<T>({
                   aria-label={t('ux.table.sortLabel')}
                   value={mobileSortValue}
                   onChange={(e) => handleMobileSortChange(e.target.value)}
-                  className="min-h-10 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  className="min-h-10 rounded-md border border-[var(--border-strong)] bg-[var(--card)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 >
                   <option value="">{t('ux.table.sortDefault')}</option>
                   {sortableColumns.map((col) => (
@@ -309,7 +323,7 @@ export function DataTable<T>({
             </div>
           )}
           {isLoading ? (
-            <div className="divide-y divide-gray-100 dark:divide-slate-800 p-4 space-y-3" role="status">
+            <div className="divide-y divide-[var(--border)] p-4 space-y-3" role="status">
               <span className="sr-only">{t('common.loading')}</span>
               {Array.from({ length: skeletonRows }, (_, idx) => (
                 <div key={idx} className="pt-3 first:pt-0 space-y-2">
@@ -319,21 +333,21 @@ export function DataTable<T>({
               ))}
             </div>
           ) : displayData.length === 0 ? (
-            <div className="px-4 py-12 text-center text-gray-400 dark:text-slate-400">
+            <div className="px-4 py-10 text-center text-[13px] text-[var(--muted-foreground)]">
               {emptyIcon && <div className="flex justify-center mb-2">{emptyIcon}</div>}
               <p>{resolvedEmptyMessage}</p>
               {emptyAction && <div className="mt-3 flex justify-center">{emptyAction}</div>}
             </div>
           ) : (
-            <div className="divide-y divide-gray-100 dark:divide-slate-800">
+            <div className="divide-y divide-[var(--border)]">
               {displayData.map((row, idx) => (
                 <div
                   key={getKey(row, idx)}
                   tabIndex={!disableRowClick ? 0 : undefined}
                   onKeyDown={(e) => handleRowKeyDown(e, row, idx)}
-                  className={`p-4 transition-colors ${
+                  className={`px-4 py-3 transition-colors ${
                     !disableRowClick
-                      ? 'cursor-pointer active:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]'
+                      ? 'cursor-pointer active:bg-[var(--surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]'
                       : ''
                   }`}
                   onClick={() => handleRowClick(row, idx)}
@@ -347,14 +361,14 @@ export function DataTable<T>({
                           checked={selectedKeySet.has(getKey(row, idx))}
                           disabled={!(isRowSelectable?.(row) ?? true)}
                           onChange={() => toggleRowSelection(row, idx)}
-                          className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
+                          className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
                           aria-label={t('common.selectRow')}
                         />
                       </div>
                     )}
                     <div className="flex-1 min-w-0 space-y-0.5">
                       {mobilePrimary.map((col) => (
-                        <div key={col.key} className="text-sm text-gray-900 dark:text-slate-100">
+                        <div key={col.key} className="text-[13px] text-[var(--foreground)]">
                           {col.render(row)}
                         </div>
                       ))}
@@ -370,8 +384,8 @@ export function DataTable<T>({
                     <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
                       {mobileSecondary.map((col) => (
                         <div key={col.key} className="min-w-0">
-                          <span className="text-[10px] font-medium text-gray-400 dark:text-slate-500 uppercase tracking-wider">{col.header}</span>
-                          <div className="text-xs text-gray-600 dark:text-slate-300 truncate">{col.render(row)}</div>
+                          <span className="text-[10px] font-medium text-[var(--subtle-foreground)] uppercase tracking-[0.05em]">{col.header}</span>
+                          <div className="text-xs text-[var(--muted-foreground)] truncate">{col.render(row)}</div>
                         </div>
                       ))}
                     </div>
@@ -385,17 +399,17 @@ export function DataTable<T>({
         /* Desktop table view */
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50/80 dark:bg-slate-900/60 text-left border-b border-gray-100 dark:border-slate-800">
+            <thead className="bg-[var(--surface-subtle)] text-left border-b border-[var(--border)]">
               <tr>
                 {selectable && (
-                  <th className="w-12 px-6 py-3">
+                  <th className="w-10 px-4 py-2">
                     <input
                       ref={selectAllRef}
                       type="checkbox"
                       checked={allDisplayRowsSelected}
                       disabled={!hasSelectableRows}
                       onChange={toggleDisplaySelection}
-                      className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
+                      className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
                       aria-label={t('common.selectAllRows')}
                     />
                   </th>
@@ -414,7 +428,7 @@ export function DataTable<T>({
                     <th
                       key={col.key}
                       aria-sort={ariaSort}
-                      className={`px-6 py-3 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide ${
+                      className={`px-4 py-2 text-[11px] font-medium text-[var(--muted-foreground)] uppercase tracking-[0.05em] ${
                         col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
                       }`}
                     >
@@ -423,7 +437,7 @@ export function DataTable<T>({
                           type="button"
                           onClick={() => toggleSort(col.key)}
                           aria-label={t('ux.table.sortBy', { column: col.header })}
-                          className={`inline-flex items-center gap-1 rounded hover:text-gray-900 dark:hover:text-slate-100 transition-colors ${
+                          className={`inline-flex items-center gap-1 rounded hover:text-[var(--foreground)] transition-colors ${
                             col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
                           }`}
                         >
@@ -443,16 +457,16 @@ export function DataTable<T>({
                   );
                 })}
                 {renderActions && (
-                  <th className="px-6 py-3 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase text-center">{t('common.actions')}</th>
+                  <th className="px-4 py-2 text-[11px] font-medium text-[var(--muted-foreground)] uppercase tracking-[0.05em] text-center">{t('common.actions')}</th>
                 )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
+            <tbody className="divide-y divide-[var(--border)]">
               {isLoading ? (
                 <tr>
-                  <td colSpan={colCount} className="px-6 py-5">
+                  <td colSpan={colCount} className="px-4 py-4">
                     <span className="sr-only">{t('common.loading')}</span>
-                    <div className="space-y-3">
+                    <div className="space-y-2.5">
                       {Array.from({ length: skeletonRows }, (_, idx) => (
                         <div key={idx} className="flex items-center gap-4">
                           <Skeleton className="h-4 w-1/4" />
@@ -465,7 +479,7 @@ export function DataTable<T>({
                 </tr>
               ) : displayData.length === 0 ? (
                 <tr>
-                  <td colSpan={colCount} className="px-6 py-12 text-center text-gray-400 dark:text-slate-400">
+                  <td colSpan={colCount} className="px-4 py-10 text-center text-[13px] text-[var(--muted-foreground)]">
                     {emptyIcon && <div className="flex justify-center mb-2">{emptyIcon}</div>}
                     {resolvedEmptyMessage}
                     {emptyAction && <div className="mt-3 flex justify-center">{emptyAction}</div>}
@@ -477,7 +491,7 @@ export function DataTable<T>({
                     key={getKey(row, idx)}
                     tabIndex={!disableRowClick ? 0 : undefined}
                     onKeyDown={(e) => handleRowKeyDown(e, row, idx)}
-                    className={`hover:bg-[var(--accent-soft)] transition-colors ${
+                    className={`hover:bg-[var(--surface-subtle)]/70 transition-colors ${
                       !disableRowClick
                         ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]'
                         : ''
@@ -485,13 +499,13 @@ export function DataTable<T>({
                     onClick={() => handleRowClick(row, idx)}
                   >
                     {selectable && (
-                      <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedKeySet.has(getKey(row, idx))}
                           disabled={!(isRowSelectable?.(row) ?? true)}
                           onChange={() => toggleRowSelection(row, idx)}
-                          className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
+                          className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
                           aria-label={t('common.selectRow')}
                         />
                       </td>
@@ -499,7 +513,7 @@ export function DataTable<T>({
                     {columns.map((col) => (
                       <td
                         key={col.key}
-                        className={`px-6 py-4 text-sm text-gray-800 dark:text-slate-200 ${
+                        className={`px-4 py-2.5 text-[13px] text-[var(--foreground)] ${
                           col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
                         }`}
                       >
@@ -507,7 +521,7 @@ export function DataTable<T>({
                       </td>
                     ))}
                     {renderActions && (
-                      <td className="px-6 py-4 text-sm text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-4 py-2.5 text-[13px] text-center" onClick={(e) => e.stopPropagation()}>
                         {renderActions(row)}
                       </td>
                     )}
@@ -521,8 +535,8 @@ export function DataTable<T>({
 
         {/* Pagination */}
         {(totalPages > 1 || currentPage > 1) && !isLoading && (
-          <div className="flex flex-col gap-2 sm:flex-row items-center justify-between px-4 sm:px-6 py-3 border-t border-gray-100 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-900/50">
-            <span className="text-sm text-gray-500 dark:text-slate-400">
+          <div className="flex flex-col gap-2 sm:flex-row items-center justify-between px-4 py-2.5 border-t border-[var(--border)] bg-[var(--surface-subtle)]/50">
+            <span className="text-xs text-[var(--muted-foreground)] tabular-nums">
               {t('common.showing', { from: (safePage - 1) * perPage + 1, to: Math.min(safePage * perPage, totalItems), total: totalItems })}
             </span>
             <div className="flex items-center gap-1">
@@ -531,27 +545,27 @@ export function DataTable<T>({
                 onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
                 disabled={safePage === 1}
                 aria-label={t('a11y.previousPage')}
-                className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 inline-flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="sm:hidden text-sm text-gray-600 dark:text-slate-300 px-2">
+              <span className="sm:hidden text-xs text-[var(--foreground)] px-2 tabular-nums">
                 {safePage} / {Math.max(1, totalPages)}
               </span>
               <div className="hidden sm:flex items-center gap-1">
-                {getPageNumbers().map((p, i) =>
+                {pageNumbers.map((p, i) =>
                   p === 'ellipsis' ? (
-                    <span key={`e${i}`} className="px-1 text-gray-400">...</span>
+                    <span key={`e${i}`} className="px-1 text-xs text-[var(--subtle-foreground)]">...</span>
                   ) : (
                     <button
                       type="button"
                       key={p}
                       onClick={() => setCurrentPage(p)}
                       aria-current={p === safePage ? 'page' : undefined}
-                      className={`min-w-[32px] h-8 rounded-lg text-sm font-medium transition-all ${
+                      className={`min-w-[28px] h-7 px-1.5 rounded-md text-xs font-medium tabular-nums transition-colors ${
                         p === safePage
-                          ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
-                          : 'text-gray-600 dark:text-slate-300 hover:bg-gray-200/80 dark:hover:bg-slate-800'
+                          ? 'bg-[var(--primary-bg)] text-[var(--primary-fg)]'
+                          : 'text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)]'
                       }`}
                     >
                       {p}
@@ -564,7 +578,7 @@ export function DataTable<T>({
                 onClick={() => setCurrentPage(Math.min(Math.max(1, totalPages), safePage + 1))}
                 disabled={safePage >= Math.max(1, totalPages)}
                 aria-label={t('a11y.nextPage')}
-                className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 inline-flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -584,13 +598,13 @@ export function DataTable<T>({
           renderSummary ? (
             renderSummary(selectedRow, () => setSelectedSummary(null))
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-4">
               {columns
                 .filter((col) => !col.hideInSummary)
                 .map((col) => (
-                  <div key={col.key} className="flex flex-col gap-1.5">
-                    <span className="text-xs font-medium text-gray-400 dark:text-slate-500 uppercase tracking-wider">{col.header}</span>
-                    <div className="text-sm text-gray-900 dark:text-slate-100">
+                  <div key={col.key} className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium text-[var(--muted-foreground)] uppercase tracking-[0.05em]">{col.header}</span>
+                    <div className="text-[13px] text-[var(--foreground)]">
                       {col.summaryRender ? col.summaryRender(selectedRow) : col.render(selectedRow)}
                     </div>
                   </div>

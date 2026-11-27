@@ -48,7 +48,7 @@ export function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () 
         className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6"
       >
         {[0, 1, 2].map((i) => (
-          <Skeleton key={i} className="h-20 w-full rounded-2xl" />
+          <Skeleton key={i} className="h-20 w-full rounded-xl" />
         ))}
       </div>
     );
@@ -124,7 +124,7 @@ export function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () 
             key={s.label}
             type="button"
             onClick={s.action}
-            className={`${shell} min-h-11 text-left cursor-pointer hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]`}
+            className={`${shell} min-h-11 text-left cursor-pointer hover:border-[var(--accent-1)]/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]`}
           >
             {body}
           </button>

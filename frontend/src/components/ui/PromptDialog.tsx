@@ -47,9 +47,9 @@ export function PromptProvider({ children }: { children: ReactNode }) {
 
   const confirmButtonClass =
     variant === 'danger'
-      ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 min-h-[44px] text-sm font-semibold text-white shadow-sm transition-all hover:bg-red-700 active:scale-[0.98]'
+      ? 'btn-danger'
       : variant === 'warning'
-        ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 min-h-[44px] text-sm font-semibold text-white shadow-sm transition-all hover:bg-amber-700 active:scale-[0.98]'
+        ? 'inline-flex items-center justify-center gap-2 rounded-md bg-amber-600 px-3.5 py-1.5 min-h-11 sm:min-h-9 text-[13px] font-medium text-white transition-colors hover:bg-amber-700'
         : 'btn-primary';
 
   return (
@@ -71,8 +71,8 @@ export function PromptProvider({ children }: { children: ReactNode }) {
           </div>
         }
       >
-        <div className="space-y-3">
-          <label htmlFor={inputId} className="block text-sm leading-relaxed text-gray-700 dark:text-slate-300">
+        <div className="space-y-2.5">
+          <label htmlFor={inputId} className="block text-[13px] leading-relaxed text-[var(--muted-foreground)]">
             {active?.description}
           </label>
           <textarea

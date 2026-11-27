@@ -2,7 +2,8 @@ use std::future::Future;
 use std::net::IpAddr;
 use std::time::Duration;
 
-use chrono::{Datelike, Utc};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use chrono::{DateTime, Datelike, Utc};
 use chrono_tz::Tz;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -11,27 +12,56 @@ use webauthn_rs::Webauthn;
 use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 
 use crate::core::error::{AppError, AppResult};
-use crate::core::timezone;
+use crate::core::{timezone, upload_path};
 use crate::models::attendance::{
+    AnomalyReportSummary, AttendanceAnomaliesQuery, AttendanceAnomaliesReport,
     AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
     AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
-    FaceIdBeginResponse, ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse,
-    UpdateAttendanceRecordRequest,
+    CreatePersonalQrRequest, DeviceProofRequest, FaceIdBeginResponse, KioskCheckInRequest,
+    KioskCheckInResponse, ManualAttendanceRequest, PaginatedAttendance, PersonalQrResponse,
+    QrTokenResponse, UpdateAttendanceRecordRequest,
 };
 use crate::models::attendance_kiosk::KioskCredential;
+use crate::repositories::attendance_records::{CheckInInsertParams, CheckOutUpdateParams};
 use crate::repositories::reads::attendance as attendance_reads;
 use crate::repositories::{
-    attendance_kiosk_credentials, attendance_qr_tokens, attendance_records, audit_logs, clock,
-    companies, company_work_schedules, employee_work_schedules, employees, passkey_challenges,
-    payroll_runs, platform_settings, users,
+    attendance_kiosk_credentials, attendance_personal_qr_tokens, attendance_qr_tokens,
+    attendance_records, audit_logs, clock, companies, company_work_schedules,
+    employee_attendance_devices, employee_work_schedules, employees, passkey_challenges,
+    payroll_runs, platform_settings, uploaded_files, user_sessions, users,
 };
+use crate::services::attendance_device_service::DeviceVerificationOutcome;
 use crate::services::audit_service::{self, AuditRequestMeta};
 use crate::services::{
-    attendance_network_service, csv_helpers, geofence_service, passkey_service, settings_service,
+    attendance_device_service, attendance_network_service, csv_helpers, geofence_service,
+    passkey_service, settings_service, upload_service,
 };
 
-// ─── QR Token TTL ───
-const QR_TOKEN_TTL_SECONDS: i64 = 300;
+// ─── QR Token TTLs & Photo Limits ───
+const KIOSK_QR_TOKEN_TTL_SECONDS: i64 = 30;
+const CONSOLE_QR_TOKEN_TTL_SECONDS: i64 = 60;
+const QR_TOKEN_ROTATION_GRACE_SECONDS: i64 = 10;
+const PERSONAL_QR_TOKEN_TTL_SECONDS: i64 = 60;
+pub const ATTENDANCE_PHOTO_MAX_BYTES: usize = 512 * 1024;
+const MAX_ANOMALY_RANGE_DAYS: i64 = 90;
+
+#[derive(Debug, Default, Clone)]
+pub struct CheckInContext {
+    pub user_id: Option<Uuid>,
+    pub session_id: Option<Uuid>,
+    pub cookie_device_id: Option<Uuid>,
+    pub user_agent: Option<String>,
+    pub passkey_id: Option<Uuid>,
+    pub passkey_is_synced: bool,
+    pub device_proof: Option<DeviceProofRequest>,
+    pub photo_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FaceIdVerification {
+    pub passkey_id: Uuid,
+    pub is_synced: bool,
+}
 
 fn normalize_absent_check_out(
     status: &str,
@@ -73,9 +103,9 @@ pub async fn set_platform_attendance_method(
     updated_by: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    if method != "qr_code" && method != "face_id" {
+    if !matches!(method, "qr_code" | "face_id" | "qr_and_face_id") {
         return Err(AppError::BadRequest(
-            "Method must be 'qr_code' or 'face_id'".into(),
+            "Method must be 'qr_code', 'face_id', or 'qr_and_face_id'".into(),
         ));
     }
 
@@ -150,6 +180,7 @@ pub async fn get_attendance_bootstrap(
     let effective = get_effective_method(pool, company_id).await?;
     let geofence_mode = geofence_service::get_geofence_mode(pool, company_id).await?;
     let network_mode = attendance_network_service::get_mode(pool, company_id).await?;
+    let security = attendance_device_service::get_security_settings(pool, company_id).await?;
     let default_schedule = company_work_schedules::get_default(pool, company_id).await?;
     let timezone = timezone::sanitize(default_schedule.as_ref().map(|s| s.timezone.clone()));
     let shift_start_time = default_schedule
@@ -163,6 +194,10 @@ pub async fn get_attendance_bootstrap(
         is_company_override: effective.is_company_override,
         geofence_mode,
         network_mode,
+        device_mode: security.device_mode,
+        device_auto_approve_first: security.device_auto_approve_first,
+        photo_mode: security.photo_mode,
+        photo_retention_days: security.photo_retention_days,
         timezone,
         shift_start_time,
         grace_minutes,
@@ -185,11 +220,10 @@ pub async fn set_company_attendance_method(
     }
 
     if let Some(m) = method
-        && m != "qr_code"
-        && m != "face_id"
+        && !matches!(m, "qr_code" | "face_id" | "qr_and_face_id")
     {
         return Err(AppError::BadRequest(
-            "Method must be 'qr_code' or 'face_id'".into(),
+            "Method must be 'qr_code', 'face_id', or 'qr_and_face_id'".into(),
         ));
     }
 
@@ -226,12 +260,23 @@ async fn mint_qr_token_on(
     frontend_url: &str,
     kiosk_credential_id: Option<Uuid>,
 ) -> AppResult<QrTokenResponse> {
-    attendance_qr_tokens::revoke_unused_for_issuer(&mut **tx, company_id, kiosk_credential_id)
+    let ttl_seconds = if let Some(kiosk_id) = kiosk_credential_id {
+        attendance_qr_tokens::retire_for_kiosk_rotation(
+            &mut **tx,
+            company_id,
+            kiosk_id,
+            QR_TOKEN_ROTATION_GRACE_SECONDS,
+        )
         .await?;
+        KIOSK_QR_TOKEN_TTL_SECONDS
+    } else {
+        attendance_qr_tokens::revoke_unused_for_issuer(&mut **tx, company_id, None).await?;
+        CONSOLE_QR_TOKEN_TTL_SECONDS
+    };
 
     let token = Uuid::new_v4().to_string().replace('-', "");
     let token_hash = sha256_hex(&token);
-    let expires_at = Utc::now() + chrono::Duration::seconds(QR_TOKEN_TTL_SECONDS);
+    let expires_at = Utc::now() + chrono::Duration::seconds(ttl_seconds);
 
     attendance_qr_tokens::insert(
         &mut **tx,
@@ -252,7 +297,7 @@ async fn mint_qr_token_on(
         token,
         expires_at,
         scan_url,
-        ttl_seconds: QR_TOKEN_TTL_SECONDS,
+        ttl_seconds,
     })
 }
 
@@ -345,7 +390,7 @@ pub async fn face_id_verify(
     user_id: Uuid,
     challenge_id: Uuid,
     credential: &PublicKeyCredential,
-) -> AppResult<()> {
+) -> AppResult<FaceIdVerification> {
     let state_json =
         passkey_challenges::consume_for_user(pool, challenge_id, FACE_ID_CHALLENGE_TYPE, user_id)
             .await?
@@ -364,9 +409,14 @@ pub async fn face_id_verify(
         .iter()
         .find(|(_, pk)| pk.cred_id() == auth_result.cred_id())
         .ok_or_else(|| AppError::Unauthorized("Passkey credential was removed".into()))?;
-    passkey_service::update_passkey_after_auth(pool, *pk_id, user_id, &auth_result).await?;
+    let passkey_id = *pk_id;
+    let is_synced = auth_result.backup_eligible();
+    passkey_service::update_passkey_after_auth(pool, passkey_id, user_id, &auth_result).await?;
 
-    Ok(())
+    Ok(FaceIdVerification {
+        passkey_id,
+        is_synced,
+    })
 }
 
 // ─── Kiosk Credentials (public-URL kiosk display) ───
@@ -609,7 +659,296 @@ pub(crate) async fn get_company_timezone(pool: &PgPool, company_id: Uuid) -> Str
     )
 }
 
+// ─── Photo Capture Storage & Cleanup ───
+
+fn parse_photo_payload(raw: &str) -> AppResult<(Vec<u8>, &'static str)> {
+    let trimmed = raw.trim();
+    let (declared_ext, b64_part) = if let Some(rest) = trimmed.strip_prefix("data:") {
+        let (header, data) = rest
+            .split_once(',')
+            .ok_or_else(|| AppError::BadRequest("Invalid attendance photo data".into()))?;
+        let mime = header
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let ext = match mime.as_str() {
+            "image/jpeg" | "image/jpg" => Some("jpg"),
+            "image/png" => Some("png"),
+            "image/webp" => Some("webp"),
+            _ => {
+                return Err(AppError::BadRequest(
+                    "Attendance photo must be a JPEG, PNG, or WebP image".into(),
+                ));
+            }
+        };
+        (ext, data.trim())
+    } else {
+        (None, trimmed)
+    };
+
+    let bytes = STANDARD
+        .decode(b64_part)
+        .map_err(|_| AppError::BadRequest("Invalid attendance photo encoding".into()))?;
+    if bytes.is_empty() {
+        return Err(AppError::BadRequest("Attendance photo is empty".into()));
+    }
+    if bytes.len() > ATTENDANCE_PHOTO_MAX_BYTES {
+        return Err(AppError::BadRequest(
+            "Attendance photo exceeds maximum size (512 KB)".into(),
+        ));
+    }
+
+    let ext = match declared_ext {
+        Some(ext) => ext,
+        None => {
+            if upload_service::validate_magic_bytes(&bytes, "jpg") {
+                "jpg"
+            } else if upload_service::validate_magic_bytes(&bytes, "png") {
+                "png"
+            } else if upload_service::validate_magic_bytes(&bytes, "webp") {
+                "webp"
+            } else {
+                return Err(AppError::BadRequest(
+                    "Attendance photo must be a JPEG, PNG, or WebP image".into(),
+                ));
+            }
+        }
+    };
+
+    upload_service::validate_upload_bytes(&format!("photo.{ext}"), &bytes)?;
+    Ok((bytes, ext))
+}
+
+pub(crate) async fn store_attendance_photo(
+    pool: &PgPool,
+    company_id: Uuid,
+    uploaded_by: Option<Uuid>,
+    raw_base64: &str,
+) -> AppResult<(String, String)> {
+    let (bytes, ext) = parse_photo_payload(raw_base64)?;
+    tokio::fs::create_dir_all(upload_path::UPLOAD_DIR)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to create upload dir: {e}")))?;
+
+    let stored_name = format!("{}_att.{ext}", Uuid::new_v4());
+    let file_path = upload_path::stored_path(&stored_name)?;
+    tokio::fs::write(&file_path, &bytes)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to save attendance photo: {e}")))?;
+
+    if let Err(err) = uploaded_files::insert(
+        pool,
+        &stored_name,
+        company_id,
+        uploaded_by,
+        bytes.len() as i64,
+    )
+    .await
+    {
+        let _ = tokio::fs::remove_file(&file_path).await;
+        return Err(err);
+    }
+
+    let file_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, stored_name);
+    Ok((stored_name, file_url))
+}
+
+async fn cleanup_stored_photo(pool: &PgPool, stored_name: &str) {
+    let _ = uploaded_files::delete_by_stored_name(pool, stored_name).await;
+    if let Ok(path) = upload_path::stored_path(stored_name)
+        && let Ok(confined) = upload_path::confine_existing_file(&path)
+    {
+        let _ = tokio::fs::remove_file(&confined).await;
+    }
+}
+
+pub async fn purge_expired_attendance_photos(pool: &PgPool) -> AppResult<u64> {
+    let removed = attendance_records::purge_expired_photos(pool).await?;
+    let count = removed.len() as u64;
+    for stored_name in removed {
+        if let Ok(path) = upload_path::stored_path(&stored_name)
+            && let Ok(confined) = upload_path::confine_existing_file(&path)
+        {
+            let _ = tokio::fs::remove_file(&confined).await;
+        }
+    }
+    Ok(count)
+}
+
 // ─── Check In / Check Out ───
+
+fn push_unique_flag(flags: &mut Vec<String>, flag: &str) {
+    if !flags.iter().any(|f| f == flag) {
+        flags.push(flag.to_string());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_checkin_with_security(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    method: &str,
+    qr_token_id: Option<Uuid>,
+    kiosk_minted: bool,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
+    ctx: &CheckInContext,
+    check_geofence_and_network: bool,
+) -> AppResult<AttendanceRecord> {
+    let tz = get_company_timezone(pool, company_id).await;
+    ensure_no_active_checkin(pool, employee_id, &tz).await?;
+
+    let security = attendance_device_service::get_security_settings(pool, company_id).await?;
+    let raw_photo = ctx
+        .photo_base64
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if security.photo_mode == "required" && raw_photo.is_none() {
+        return Err(AppError::BadRequest(
+            "A live check-in photo is required for this company".into(),
+        ));
+    }
+
+    let (outside_geofence, offsite_network) = if check_geofence_and_network {
+        let outside_geofence =
+            geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
+        let offsite_network = attendance_network_service::validate_for_checkin(
+            pool,
+            company_id,
+            employee_id,
+            client_ip,
+        )
+        .await?;
+        (outside_geofence, offsite_network)
+    } else {
+        (false, None)
+    };
+
+    let device_outcome = if let Some(user_id) = ctx.user_id {
+        attendance_device_service::verify_device_for_action(
+            pool,
+            company_id,
+            employee_id,
+            user_id,
+            "check_in",
+            ctx.device_proof.as_ref(),
+            ctx.cookie_device_id,
+            true,
+        )
+        .await?
+    } else {
+        DeviceVerificationOutcome {
+            verified_device_id: None,
+            is_untrusted: if security.device_mode == "none" {
+                None
+            } else {
+                Some(true)
+            },
+        }
+    };
+
+    let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
+
+    let mut anomaly_flags = Vec::new();
+    if device_outcome.is_untrusted == Some(true) {
+        push_unique_flag(&mut anomaly_flags, "untrusted_device");
+    }
+    if ctx.passkey_is_synced {
+        push_unique_flag(&mut anomaly_flags, "synced_passkey");
+    }
+    if let (Some(user_id), Some(session_id)) = (ctx.user_id, ctx.session_id)
+        && user_sessions::is_fresh_with_prior_session(pool, user_id, session_id)
+            .await
+            .unwrap_or(false)
+    {
+        push_unique_flag(&mut anomaly_flags, "fresh_session");
+    }
+
+    let saved_photo = match raw_photo {
+        Some(raw) => Some(store_attendance_photo(pool, company_id, ctx.user_id, raw).await?),
+        None => None,
+    };
+    let photo_url = saved_photo.as_ref().map(|(_, url)| url.as_str());
+
+    let insert_res = insert_checkin(pool, employee_id, &tz, || async {
+        let mut tx = pool.begin().await?;
+        employees::lock_for_update(&mut *tx, employee_id, company_id).await?;
+
+        let mut tx_flags = anomaly_flags.clone();
+        let mut shared_other_ids = Vec::new();
+        if let Some(cookie_id) = ctx.cookie_device_id {
+            shared_other_ids = attendance_records::find_other_employee_records_by_cookie_24h(
+                &mut *tx,
+                company_id,
+                employee_id,
+                cookie_id,
+            )
+            .await?;
+            if !shared_other_ids.is_empty() {
+                push_unique_flag(&mut tx_flags, "shared_device");
+            }
+        }
+
+        let record = attendance_records::insert_checked_in(
+            &mut *tx,
+            &CheckInInsertParams {
+                company_id,
+                employee_id,
+                method,
+                status: &status,
+                latitude,
+                longitude,
+                qr_token_id,
+                is_outside_geofence: outside_geofence,
+                is_offsite_network: offsite_network,
+                session_id: ctx.session_id,
+                device_id: device_outcome.verified_device_id,
+                cookie_id: ctx.cookie_device_id,
+                passkey_id: ctx.passkey_id,
+                user_agent: ctx.user_agent.as_deref(),
+                is_untrusted_device: device_outcome.is_untrusted,
+                anomaly_flags: &tx_flags,
+                photo_url,
+            },
+        )
+        .await?;
+
+        if !shared_other_ids.is_empty() {
+            attendance_records::append_anomaly_flag(&mut *tx, &shared_other_ids, "shared_device")
+                .await?;
+        }
+
+        attendance_records::delete_auto_absent_today(&mut *tx, employee_id, &tz).await?;
+        tx.commit().await?;
+        Ok(record)
+    })
+    .await;
+
+    let record = match insert_res {
+        Ok(record) => {
+            if let Some((ref stored_name, ref expected_url)) = saved_photo
+                && record.check_in_photo_url.as_deref() != Some(expected_url.as_str())
+            {
+                cleanup_stored_photo(pool, stored_name).await;
+            }
+            record
+        }
+        Err(e) => {
+            if let Some((ref stored_name, _)) = saved_photo {
+                cleanup_stored_photo(pool, stored_name).await;
+            }
+            return Err(e);
+        }
+    };
+
+    observe_network(pool, company_id, employee_id, client_ip, kiosk_minted).await;
+    Ok(record)
+}
 
 pub async fn check_in_qr(
     pool: &PgPool,
@@ -620,57 +959,47 @@ pub async fn check_in_qr(
     longitude: Option<f64>,
     client_ip: Option<IpAddr>,
 ) -> AppResult<AttendanceRecord> {
+    check_in_qr_with_context(
+        pool,
+        employee_id,
+        company_id,
+        token,
+        latitude,
+        longitude,
+        client_ip,
+        &CheckInContext::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn check_in_qr_with_context(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    token: &str,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
+    ctx: &CheckInContext,
+) -> AppResult<AttendanceRecord> {
     // Validate the QR token first so expired/revoked tokens fail fast without
     // running geofence or network checks or counting against denied_count.
     let (token_id, kiosk_minted) = validate_qr_token_details(pool, token, company_id).await?;
-    let tz = get_company_timezone(pool, company_id).await;
-    ensure_no_active_checkin(pool, employee_id, &tz).await?;
-
-    // Geofence check (may reject in enforce mode)
-    let outside_geofence =
-        geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
-
-    // Network check (may reject in enforce mode). Ordered after the geofence so
-    // an employee who is off-site for both reasons is told the more actionable
-    // of the two first.
-    let offsite_network =
-        attendance_network_service::validate_for_checkin(pool, company_id, employee_id, client_ip)
-            .await?;
-
-    let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
-
-    let record = insert_checkin(pool, employee_id, &tz, || async {
-        let mut tx = pool.begin().await?;
-        // Lock the employee row in the same order as auto-absent `mark_absent_returning`
-        // so check-in and auto-absent serialize cleanly without concurrent phantoms.
-        employees::lock_for_update(&mut *tx, employee_id, company_id).await?;
-        let record = attendance_records::insert_qr(
-            &mut *tx,
-            company_id,
-            employee_id,
-            &status,
-            latitude,
-            longitude,
-            token_id,
-            outside_geofence,
-            offsite_network,
-        )
-        .await?;
-        // A post-cron check-in supersedes the day's auto-absent placeholder —
-        // atomically, so the day never counts as both absent and late.
-        attendance_records::delete_auto_absent_today(&mut *tx, employee_id, &tz).await?;
-        tx.commit().await?;
-        Ok(record)
-    })
-    .await?;
-
-    // A QR token minted by a physical kiosk credential is corroboration the
-    // employee cannot manufacture. Client-supplied GPS coordinates are spoofable
-    // and never promote an IP observation into an anchored office candidate.
-    let anchored = kiosk_minted;
-    observe_network(pool, company_id, employee_id, client_ip, anchored).await;
-
-    Ok(record)
+    record_checkin_with_security(
+        pool,
+        employee_id,
+        company_id,
+        "qr_code",
+        Some(token_id),
+        kiosk_minted,
+        latitude,
+        longitude,
+        client_ip,
+        ctx,
+        true,
+    )
+    .await
 }
 
 /// Record the observation, swallowing failures — learning is evidence
@@ -698,44 +1027,69 @@ pub async fn check_in_face_id(
     longitude: Option<f64>,
     client_ip: Option<IpAddr>,
 ) -> AppResult<AttendanceRecord> {
-    let tz = get_company_timezone(pool, company_id).await;
-    ensure_no_active_checkin(pool, employee_id, &tz).await?;
+    check_in_face_id_with_context(
+        pool,
+        employee_id,
+        company_id,
+        latitude,
+        longitude,
+        client_ip,
+        &CheckInContext::default(),
+    )
+    .await
+}
 
-    // Geofence check
-    let outside_geofence =
-        geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
+pub async fn check_in_face_id_with_context(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
+    ctx: &CheckInContext,
+) -> AppResult<AttendanceRecord> {
+    record_checkin_with_security(
+        pool,
+        employee_id,
+        company_id,
+        "face_id",
+        None,
+        false,
+        latitude,
+        longitude,
+        client_ip,
+        ctx,
+        true,
+    )
+    .await
+}
 
-    let offsite_network =
-        attendance_network_service::validate_for_checkin(pool, company_id, employee_id, client_ip)
-            .await?;
-
-    let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
-
-    let record = insert_checkin(pool, employee_id, &tz, || async {
-        let mut tx = pool.begin().await?;
-        employees::lock_for_update(&mut *tx, employee_id, company_id).await?;
-        let record = attendance_records::insert_face(
-            &mut *tx,
-            company_id,
-            employee_id,
-            &status,
-            latitude,
-            longitude,
-            outside_geofence,
-            offsite_network,
-        )
-        .await?;
-        attendance_records::delete_auto_absent_today(&mut *tx, employee_id, &tz).await?;
-        tx.commit().await?;
-        Ok(record)
-    })
-    .await?;
-
-    // Face ID check-ins carry no physical kiosk token, and client-supplied GPS
-    // coordinates are spoofable, so they never anchor an office candidate.
-    observe_network(pool, company_id, employee_id, client_ip, false).await;
-
-    Ok(record)
+#[allow(clippy::too_many_arguments)]
+pub async fn check_in_qr_face_id(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    token: &str,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
+    ctx: &CheckInContext,
+) -> AppResult<AttendanceRecord> {
+    let (token_id, kiosk_minted) = validate_qr_token_details(pool, token, company_id).await?;
+    record_checkin_with_security(
+        pool,
+        employee_id,
+        company_id,
+        "qr_and_face_id",
+        Some(token_id),
+        kiosk_minted,
+        latitude,
+        longitude,
+        client_ip,
+        ctx,
+        true,
+    )
+    .await
 }
 
 /// Run a check-in insert closure, translating the one-open-session unique
@@ -769,44 +1123,138 @@ pub async fn check_out(
     longitude: Option<f64>,
     client_ip: Option<IpAddr>,
 ) -> AppResult<AttendanceRecord> {
+    check_out_with_context(
+        pool,
+        employee_id,
+        company_id,
+        latitude,
+        longitude,
+        client_ip,
+        &CheckInContext::default(),
+    )
+    .await
+}
+
+pub async fn check_out_with_context(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
+    ctx: &CheckInContext,
+) -> AppResult<AttendanceRecord> {
     // Never blocks: an off-site (or GPS-less) check-out is flagged for admin
     // review instead of refused, so employees cannot be trapped in an open
     // session that only an admin correction can close.
     let outside_geofence =
         geofence_service::flag_geofence_for_checkout(pool, company_id, latitude, longitude).await?;
 
-    // Same rule for the network, and for the same reason. Enforcing here would
-    // strand anyone who steps out of the building before closing their shift.
     let offsite_network =
         attendance_network_service::flag_for_checkout(pool, company_id, client_ip).await?;
 
-    // Above this many derived overtime hours the figure is treated as a
-    // forgotten check-out and left unrated for HR rather than paid. The decision
-    // is per-tenant configuration, so it is read here; the repository only
-    // applies the bound it is given.
     let max_overtime_hours = settings_service::overtime_settings(pool, company_id)
         .await
         .max_overtime_hours_per_day;
 
-    if let Some(record) = attendance_records::check_out(
-        pool,
-        employee_id,
-        latitude,
-        longitude,
-        company_id,
-        outside_geofence,
-        offsite_network,
-        max_overtime_hours,
+    let open_row = attendance_records::find_latest_open_24h(pool, employee_id, company_id).await?;
+    let device_outcome = if let Some(user_id) = ctx.user_id {
+        attendance_device_service::verify_device_for_action(
+            pool,
+            company_id,
+            employee_id,
+            user_id,
+            "check_out",
+            ctx.device_proof.as_ref(),
+            ctx.cookie_device_id,
+            false,
+        )
+        .await?
+    } else {
+        DeviceVerificationOutcome {
+            verified_device_id: None,
+            is_untrusted: None,
+        }
+    };
+
+    let mut checkout_flags = Vec::new();
+    if device_outcome.is_untrusted == Some(true) {
+        push_unique_flag(&mut checkout_flags, "untrusted_device");
+    }
+    if let Some(ref open) = open_row {
+        if let Some(in_dev) = open.check_in_device_id {
+            if device_outcome.verified_device_id != Some(in_dev) {
+                push_unique_flag(&mut checkout_flags, "device_mismatch");
+            }
+        } else if let (Some(in_cookie), Some(out_cookie)) =
+            (open.check_in_cookie_id, ctx.cookie_device_id)
+            && in_cookie != out_cookie
+        {
+            push_unique_flag(&mut checkout_flags, "device_mismatch");
+        }
+    }
+
+    let raw_photo = ctx
+        .photo_base64
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let saved_photo = match raw_photo {
+        Some(raw) => Some(store_attendance_photo(pool, company_id, ctx.user_id, raw).await?),
+        None => None,
+    };
+    let photo_url = saved_photo.as_ref().map(|(_, url)| url.as_str());
+
+    let mut tx = pool.begin().await?;
+    let mut shared_other_ids = Vec::new();
+    if let Some(cookie_id) = ctx.cookie_device_id {
+        shared_other_ids = attendance_records::find_other_employee_records_by_cookie_24h(
+            &mut *tx,
+            company_id,
+            employee_id,
+            cookie_id,
+        )
+        .await?;
+        if !shared_other_ids.is_empty() {
+            push_unique_flag(&mut checkout_flags, "shared_device");
+        }
+    }
+
+    let updated = attendance_records::check_out_with_context(
+        &mut *tx,
+        &CheckOutUpdateParams {
+            employee_id,
+            latitude,
+            longitude,
+            company_id,
+            outside_geofence,
+            offsite_network,
+            max_overtime_hours,
+            session_id: ctx.session_id,
+            device_id: device_outcome.verified_device_id,
+            cookie_id: ctx.cookie_device_id,
+            user_agent: ctx.user_agent.as_deref(),
+            untrusted_device: device_outcome.is_untrusted == Some(true),
+            anomaly_flags: &checkout_flags,
+            photo_url,
+        },
     )
-    .await?
-    {
+    .await?;
+
+    if let Some(record) = updated {
+        if !shared_other_ids.is_empty() {
+            attendance_records::append_anomaly_flag(&mut *tx, &shared_other_ids, "shared_device")
+                .await?;
+        }
+        tx.commit().await?;
         return Ok(record);
     }
 
-    // Nothing matched the 24h window. If an older session in this company is
-    // still open, say so — the old "please check in first" advice bounced the
-    // employee into the one-open-session conflict and straight back here.
-    // Open sessions in *other* companies are not surfaced.
+    drop(tx);
+    if let Some((ref stored_name, _)) = saved_photo {
+        cleanup_stored_photo(pool, stored_name).await;
+    }
+
     let tz = get_company_timezone(pool, company_id).await;
     match attendance_records::find_open_with_local_date(pool, employee_id, &tz).await? {
         Some((record, local_date, _)) if record.company_id == company_id => {
@@ -818,6 +1266,438 @@ pub async fn check_out(
             "No active check-in found. Please check in before checking out.".into(),
         )),
     }
+}
+
+// ─── Personal Rotating QR & Kiosk Camera Check-In ───
+
+pub async fn create_personal_qr_token(
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Uuid,
+    user_id: Uuid,
+    req: &CreatePersonalQrRequest,
+    ctx: &CheckInContext,
+) -> AppResult<PersonalQrResponse> {
+    let device_outcome = attendance_device_service::verify_device_for_action(
+        pool,
+        company_id,
+        employee_id,
+        user_id,
+        "personal_qr",
+        req.device_proof.as_ref(),
+        ctx.cookie_device_id,
+        true,
+    )
+    .await?;
+
+    let action = match req.action.as_deref().map(str::trim) {
+        Some("check_in") => "check_in".to_string(),
+        Some("check_out") => "check_out".to_string(),
+        Some(_) => {
+            return Err(AppError::BadRequest(
+                "Personal QR action must be 'check_in' or 'check_out'".into(),
+            ));
+        }
+        None => {
+            if attendance_records::find_latest_open_24h(pool, employee_id, company_id)
+                .await?
+                .is_some()
+            {
+                "check_out".to_string()
+            } else {
+                "check_in".to_string()
+            }
+        }
+    };
+
+    let token = Uuid::new_v4().simple().to_string();
+    let token_hash = sha256_hex(&token);
+    let expires_at = Utc::now() + chrono::Duration::seconds(PERSONAL_QR_TOKEN_TTL_SECONDS);
+
+    let mut tx = pool.begin().await?;
+    attendance_personal_qr_tokens::revoke_active_for_employee(&mut *tx, company_id, employee_id)
+        .await?;
+    attendance_personal_qr_tokens::insert(
+        &mut *tx,
+        company_id,
+        employee_id,
+        user_id,
+        &token_hash,
+        &action,
+        device_outcome.verified_device_id,
+        ctx.cookie_device_id,
+        ctx.session_id,
+        ctx.passkey_id,
+        ctx.user_agent.as_deref(),
+        expires_at,
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(PersonalQrResponse {
+        qr_payload: format!("payroll-kiosk:{token}"),
+        token,
+        action,
+        expires_at,
+        ttl_seconds: PERSONAL_QR_TOKEN_TTL_SECONDS,
+    })
+}
+
+pub async fn kiosk_camera_check_in(
+    pool: &PgPool,
+    presented_kiosk_secret: &str,
+    req: &KioskCheckInRequest,
+    kiosk_client_ip: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<KioskCheckInResponse> {
+    let kiosk_hash = sha256_hex(presented_kiosk_secret);
+    let mut tx = pool.begin().await?;
+    let cred =
+        attendance_kiosk_credentials::find_active_by_hash_locked(&mut *tx, &kiosk_hash).await?;
+
+    let cred = match cred {
+        Some(c) => c,
+        None => {
+            drop(tx);
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            return Err(AppError::Unauthorized("Invalid kiosk credential".into()));
+        }
+    };
+
+    let raw_photo = req
+        .photo_base64
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let security = companies::get_attendance_security_settings(&mut *tx, cred.company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Company not found".into()))?;
+    if security.photo_mode == "required" && raw_photo.is_none() {
+        return Err(AppError::BadRequest(
+            "A live kiosk snapshot photo is required for this company".into(),
+        ));
+    }
+    if let Some(raw) = raw_photo {
+        let _ = parse_photo_payload(raw)?;
+    }
+
+    let raw_token = req
+        .personal_token
+        .trim()
+        .strip_prefix("payroll-kiosk:")
+        .unwrap_or(req.personal_token.trim());
+    if raw_token.is_empty() {
+        return Err(AppError::BadRequest(
+            "Invalid or expired personal attendance QR pass".into(),
+        ));
+    }
+    let token_hash = sha256_hex(raw_token);
+    let personal = attendance_personal_qr_tokens::consume_by_hash_for_company(
+        &mut *tx,
+        &token_hash,
+        cred.company_id,
+    )
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Invalid or expired personal attendance QR pass".into()))?;
+    tx.commit().await?;
+
+    let employee = employees::get(pool, personal.employee_id, cred.company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Employee profile not found".into()))?;
+
+    let stored_photo = match raw_photo {
+        Some(raw) => {
+            Some(store_attendance_photo(pool, cred.company_id, Some(personal.user_id), raw).await?)
+        }
+        None => None,
+    };
+    let photo_url = stored_photo.as_ref().map(|(_, url)| url.as_str());
+    let photo_captured = photo_url.is_some();
+    let parsed_kiosk_ip = kiosk_client_ip.and_then(|s| s.parse::<IpAddr>().ok());
+
+    let tz = get_company_timezone(pool, cred.company_id).await;
+    let outcome: Result<(AttendanceRecord, DateTime<Utc>, String), AppError> = if personal.action
+        == "check_out"
+    {
+        let open_row =
+            attendance_records::find_latest_open_24h(pool, personal.employee_id, cred.company_id)
+                .await?;
+        let max_overtime_hours = settings_service::overtime_settings(pool, cred.company_id)
+            .await
+            .max_overtime_hours_per_day;
+        let untrusted = security.device_mode != "none" && personal.device_id.is_none();
+        let mut flags = Vec::new();
+        if untrusted {
+            push_unique_flag(&mut flags, "untrusted_device");
+        }
+        if let Some(ref open) = open_row {
+            if let Some(in_dev) = open.check_in_device_id {
+                if personal.device_id != Some(in_dev) {
+                    push_unique_flag(&mut flags, "device_mismatch");
+                }
+            } else if let (Some(in_cookie), Some(out_cookie)) =
+                (open.check_in_cookie_id, personal.cookie_device_id)
+                && in_cookie != out_cookie
+            {
+                push_unique_flag(&mut flags, "device_mismatch");
+            }
+        }
+
+        let mut check_tx = pool.begin().await?;
+        let mut shared_other_ids = Vec::new();
+        if let Some(cookie_id) = personal.cookie_device_id {
+            shared_other_ids = attendance_records::find_other_employee_records_by_cookie_24h(
+                &mut *check_tx,
+                cred.company_id,
+                personal.employee_id,
+                cookie_id,
+            )
+            .await?;
+            if !shared_other_ids.is_empty() {
+                push_unique_flag(&mut flags, "shared_device");
+            }
+        }
+        let updated = attendance_records::check_out_with_context(
+            &mut *check_tx,
+            &CheckOutUpdateParams {
+                employee_id: personal.employee_id,
+                latitude: None,
+                longitude: None,
+                company_id: cred.company_id,
+                outside_geofence: false,
+                offsite_network: false,
+                max_overtime_hours,
+                session_id: personal.session_id,
+                device_id: personal.device_id,
+                cookie_id: personal.cookie_device_id,
+                user_agent: personal.user_agent.as_deref(),
+                untrusted_device: untrusted,
+                anomaly_flags: &flags,
+                photo_url,
+            },
+        )
+        .await?;
+        match updated {
+            Some(rec) => {
+                if !shared_other_ids.is_empty() {
+                    attendance_records::append_anomaly_flag(
+                        &mut *check_tx,
+                        &shared_other_ids,
+                        "shared_device",
+                    )
+                    .await?;
+                }
+                check_tx.commit().await?;
+                let ts = rec.check_out_at.unwrap_or(rec.updated_at);
+                let st = rec.status.clone();
+                Ok((rec, ts, st))
+            }
+            None => Err(AppError::BadRequest(
+                "No active check-in found. Please check in before checking out.".into(),
+            )),
+        }
+    } else {
+        if let Err(e) = ensure_no_active_checkin(pool, personal.employee_id, &tz).await {
+            if let Some((ref stored_name, _)) = stored_photo {
+                cleanup_stored_photo(pool, stored_name).await;
+            }
+            return Err(e);
+        }
+        let status =
+            determine_checkin_status(pool, personal.employee_id, cred.company_id, &tz).await?;
+        let untrusted = if security.device_mode == "none" {
+            None
+        } else {
+            Some(personal.device_id.is_none())
+        };
+        let mut flags = Vec::new();
+        if untrusted == Some(true) {
+            push_unique_flag(&mut flags, "untrusted_device");
+        }
+        if let Some(session_id) = personal.session_id
+            && user_sessions::is_fresh_with_prior_session(pool, personal.user_id, session_id)
+                .await
+                .unwrap_or(false)
+        {
+            push_unique_flag(&mut flags, "fresh_session");
+        }
+
+        let rec = insert_checkin(pool, personal.employee_id, &tz, || async {
+            let mut in_tx = pool.begin().await?;
+            employees::lock_for_update(&mut *in_tx, personal.employee_id, cred.company_id).await?;
+            let mut tx_flags = flags.clone();
+            let mut shared_other_ids = Vec::new();
+            if let Some(cookie_id) = personal.cookie_device_id {
+                shared_other_ids = attendance_records::find_other_employee_records_by_cookie_24h(
+                    &mut *in_tx,
+                    cred.company_id,
+                    personal.employee_id,
+                    cookie_id,
+                )
+                .await?;
+                if !shared_other_ids.is_empty() {
+                    push_unique_flag(&mut tx_flags, "shared_device");
+                }
+            }
+
+            let record = attendance_records::insert_checked_in(
+                &mut *in_tx,
+                &CheckInInsertParams {
+                    company_id: cred.company_id,
+                    employee_id: personal.employee_id,
+                    method: "kiosk_photo",
+                    status: &status,
+                    latitude: None,
+                    longitude: None,
+                    qr_token_id: None,
+                    is_outside_geofence: false,
+                    is_offsite_network: None,
+                    session_id: personal.session_id,
+                    device_id: personal.device_id,
+                    cookie_id: personal.cookie_device_id,
+                    passkey_id: personal.passkey_id,
+                    user_agent: personal.user_agent.as_deref(),
+                    is_untrusted_device: untrusted,
+                    anomaly_flags: &tx_flags,
+                    photo_url,
+                },
+            )
+            .await?;
+
+            if !shared_other_ids.is_empty() {
+                attendance_records::append_anomaly_flag(
+                    &mut *in_tx,
+                    &shared_other_ids,
+                    "shared_device",
+                )
+                .await?;
+            }
+            attendance_records::delete_auto_absent_today(&mut *in_tx, personal.employee_id, &tz)
+                .await?;
+            in_tx.commit().await?;
+            Ok(record)
+        })
+        .await?;
+
+        observe_network(
+            pool,
+            cred.company_id,
+            personal.employee_id,
+            parsed_kiosk_ip,
+            true,
+        )
+        .await;
+        let ts = rec.check_in_at;
+        let st = rec.status.clone();
+        Ok((rec, ts, st))
+    };
+
+    let (record, timestamp, status) = match outcome {
+        Ok(res) => {
+            if let Some((ref stored_name, ref expected_url)) = stored_photo {
+                let kept_url = if personal.action == "check_out" {
+                    res.0.check_out_photo_url.as_deref()
+                } else {
+                    res.0.check_in_photo_url.as_deref()
+                };
+                if kept_url != Some(expected_url.as_str()) {
+                    cleanup_stored_photo(pool, stored_name).await;
+                }
+            }
+            res
+        }
+        Err(e) => {
+            if let Some((ref stored_name, _)) = stored_photo {
+                cleanup_stored_photo(pool, stored_name).await;
+            }
+            return Err(e);
+        }
+    };
+
+    let _ = attendance_kiosk_credentials::mark_used(pool, cred.id, kiosk_client_ip).await;
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(cred.company_id),
+        Some(personal.user_id),
+        if personal.action == "check_out" {
+            "update"
+        } else {
+            "create"
+        },
+        "attendance_record",
+        Some(record.id),
+        None,
+        Some(serde_json::to_value(&record).unwrap_or_default()),
+        Some(if personal.action == "check_out" {
+            "Employee checked out via Kiosk Camera"
+        } else {
+            "Employee checked in via Kiosk Camera"
+        }),
+        audit_meta,
+    )
+    .await;
+
+    Ok(KioskCheckInResponse {
+        action: personal.action,
+        employee_name: employee.full_name,
+        employee_number: employee.employee_number,
+        timestamp,
+        status,
+        photo_captured,
+    })
+}
+
+pub async fn get_attendance_anomalies(
+    pool: &PgPool,
+    company_id: Uuid,
+    q: &AttendanceAnomaliesQuery,
+) -> AppResult<AttendanceAnomaliesReport> {
+    let tz = get_company_timezone(pool, company_id).await;
+    let (date_from, date_to) = match (q.date_from, q.date_to) {
+        (Some(from), Some(to)) => (from, to),
+        _ => {
+            let (today, _) = clock::date_and_time_in_tz(pool, &tz).await?;
+            let to = q.date_to.unwrap_or(today);
+            let from = q
+                .date_from
+                .unwrap_or_else(|| to - chrono::Duration::days(29));
+            (from, to)
+        }
+    };
+
+    if date_from > date_to {
+        return Err(AppError::BadRequest(format!(
+            "The start date ({date_from}) must not be after the end date ({date_to})"
+        )));
+    }
+    if (date_to - date_from).num_days() > MAX_ANOMALY_RANGE_DAYS {
+        return Err(AppError::BadRequest(format!(
+            "Anomaly range may cover at most {MAX_ANOMALY_RANGE_DAYS} days"
+        )));
+    }
+
+    let flagged_records =
+        attendance_reads::count_flagged_records_in_range(pool, company_id, &tz, date_from, date_to)
+            .await?;
+    let pending_devices =
+        employee_attendance_devices::count_pending_for_company(pool, company_id).await?;
+    let shared_device_events =
+        attendance_reads::shared_device_events(pool, company_id, &tz, date_from, date_to).await?;
+    let paired_checkins =
+        attendance_reads::paired_checkins(pool, company_id, &tz, date_from, date_to).await?;
+
+    Ok(AttendanceAnomaliesReport {
+        date_from,
+        date_to,
+        summary: AnomalyReportSummary {
+            flagged_records,
+            shared_device_incidents: shared_device_events.len() as i64,
+            paired_clusters: paired_checkins.len() as i64,
+            pending_devices,
+        },
+        shared_device_events,
+        paired_checkins,
+    })
 }
 
 /// Prevent double check-in on the same calendar day (using company timezone)
@@ -1646,6 +2526,7 @@ pub(crate) async fn export_attendance_csv_bounded(
         open_only: q.open_only,
         outside_geofence_only: q.outside_geofence_only,
         offsite_network_only: q.offsite_network_only,
+        flagged_only: q.flagged_only,
     };
 
     // The read asks for one row more than the ceiling; its presence is the
@@ -1662,7 +2543,7 @@ pub(crate) async fn export_attendance_csv_bounded(
 
     let mut csv = String::from(
         "Date,Employee Number,Name,Department,Check In,Check Out,\
-         Hours Worked,Overtime Hours,Method,Status,Outside Geofence,Notes\n",
+         Hours Worked,Overtime Hours,Method,Status,Outside Geofence,Offsite Network,Anomaly Flags,Notes\n",
     );
 
     for r in &records {
@@ -1673,6 +2554,11 @@ pub(crate) async fn export_attendance_csv_bounded(
             .is_outside_geofence
             .map(|b| if b { "Yes" } else { "No" })
             .unwrap_or("No");
+        let offsite_net = r
+            .is_offsite_network
+            .map(|b| if b { "Yes" } else { "No" })
+            .unwrap_or("No");
+        let anomaly_flags = csv_field(&r.anomaly_flags.join("; "));
         let notes = csv_field(r.notes.as_deref().unwrap_or(""));
         let dept = csv_field(r.department.as_deref().unwrap_or(""));
         let name = csv_field(&r.full_name);
@@ -1681,7 +2567,7 @@ pub(crate) async fn export_attendance_csv_bounded(
         let status = csv_field(&r.status);
 
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             date,
             employee_number,
             name,
@@ -1693,6 +2579,8 @@ pub(crate) async fn export_attendance_csv_bounded(
             method,
             status,
             outside,
+            offsite_net,
+            anomaly_flags,
             notes
         ));
     }

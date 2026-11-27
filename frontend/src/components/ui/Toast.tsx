@@ -15,22 +15,22 @@ const TONE_META: Record<ToastTone, { icon: typeof CheckCircle2; iconClass: strin
   success: {
     icon: CheckCircle2,
     iconClass: 'text-emerald-600 dark:text-emerald-400',
-    ringClass: 'border-emerald-200/80 dark:border-emerald-500/30',
+    ringClass: 'border-emerald-200 dark:border-emerald-500/30',
   },
   error: {
     icon: AlertCircle,
     iconClass: 'text-red-600 dark:text-red-400',
-    ringClass: 'border-red-200/80 dark:border-red-500/30',
+    ringClass: 'border-red-200 dark:border-red-500/30',
   },
   warning: {
     icon: AlertTriangle,
     iconClass: 'text-amber-600 dark:text-amber-400',
-    ringClass: 'border-amber-200/80 dark:border-amber-500/30',
+    ringClass: 'border-amber-200 dark:border-amber-500/30',
   },
   info: {
     icon: Info,
-    iconClass: 'text-indigo-600 dark:text-indigo-400',
-    ringClass: 'border-indigo-200/80 dark:border-indigo-500/30',
+    iconClass: 'text-[var(--accent-1)]',
+    ringClass: 'border-[var(--border)]',
   },
 };
 
@@ -59,12 +59,12 @@ function ToastCard({
       aria-live={item.tone === 'error' ? 'assertive' : 'polite'}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
-      className={`animate-drop-in glass-menu pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl ${meta.ringClass}`}
+      className={`animate-drop-in pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-lg border bg-[var(--card)] px-3.5 py-2.5 shadow-md ${meta.ringClass}`}
     >
-      <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${meta.iconClass}`} aria-hidden="true" />
-      <div className="min-w-0 flex-1 text-sm">
-        {item.title && <p className="font-semibold text-gray-900 dark:text-slate-100">{item.title}</p>}
-        <p className={`break-words text-gray-700 dark:text-slate-200 ${item.title ? 'mt-0.5 text-xs' : 'font-medium'}`}>
+      <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${meta.iconClass}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1 text-[13px]">
+        {item.title && <p className="font-semibold text-[var(--foreground)]">{item.title}</p>}
+        <p className={`break-words text-[var(--foreground)] ${item.title ? 'mt-0.5 text-xs text-[var(--muted-foreground)]' : 'font-medium'}`}>
           {item.message}
         </p>
       </div>
@@ -72,7 +72,7 @@ function ToastCard({
         type="button"
         onClick={() => onDismiss(item.id)}
         aria-label={t('ux.toast.dismiss')}
-        className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        className="rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)]"
       >
         <X className="h-4 w-4" aria-hidden="true" />
       </button>

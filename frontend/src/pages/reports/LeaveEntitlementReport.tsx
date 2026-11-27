@@ -50,7 +50,7 @@ export function LeaveEntitlementReport({
     return (
       <div role="status" aria-busy="true" aria-label={t('common.loading')} className="space-y-2.5">
         {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-18 w-full rounded-2xl" />
+          <Skeleton key={i} className="h-18 w-full rounded-xl" />
         ))}
       </div>
     );

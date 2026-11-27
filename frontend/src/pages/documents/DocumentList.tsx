@@ -170,11 +170,11 @@ export function DocumentList() {
       <button
         type="button"
         onClick={() => setSelectedTarget({ type: 'company' })}
-        className="card hover-lift w-full mb-6 text-left hover:border-gray-300 dark:hover:border-slate-700 transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        className="card w-full mb-6 text-left hover:border-[var(--accent-1)]/50 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-500/15 flex items-center justify-center text-indigo-600 dark:text-indigo-300 shrink-0">
+            <div className="w-10 h-10 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center text-[var(--accent-1)] shrink-0">
               <Building2 className="w-5 h-5" aria-hidden="true" />
             </div>
             <div className="min-w-0">
@@ -284,7 +284,7 @@ export function DocumentList() {
                   type="button"
                   key={emp.id}
                   onClick={() => setSelectedTarget({ type: 'employee', id: emp.id, name: emp.full_name, number: emp.employee_number })}
-                  className="card hover-lift text-left hover:border-gray-300 dark:hover:border-slate-700 transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  className="card text-left hover:border-[var(--accent-1)]/50 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-900 dark:text-slate-100 font-semibold text-sm group-hover:bg-gray-200 dark:group-hover:bg-slate-700 transition-colors shrink-0">

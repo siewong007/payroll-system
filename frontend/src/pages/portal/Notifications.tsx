@@ -96,7 +96,7 @@ export function Notifications() {
     overtime_approved: 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15',
     overtime_rejected: 'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-500/15',
     overtime_submitted: 'text-gray-900 dark:text-slate-200 bg-gray-100 dark:bg-slate-800',
-    payroll_processed: 'text-violet-600 dark:text-violet-300 bg-violet-50 dark:bg-violet-500/15',
+    payroll_processed: 'text-[var(--accent-1)] bg-[var(--accent-soft)]',
     attendance_absent: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15',
     general: 'text-gray-600 dark:text-slate-300 bg-gray-100 dark:bg-slate-800',
   };
@@ -134,7 +134,7 @@ export function Notifications() {
                 aria-pressed={filter === 'all'}
                 className={`min-h-11 sm:min-h-9 px-3 rounded-lg text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                   filter === 'all'
-                    ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-xs'
+                    ? 'bg-[var(--accent-1)] text-white'
                     : 'text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white'
                 }`}
               >
@@ -146,7 +146,7 @@ export function Notifications() {
                 aria-pressed={filter === 'unread'}
                 className={`min-h-11 sm:min-h-9 px-3 rounded-lg text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                   filter === 'unread'
-                    ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-xs'
+                    ? 'bg-[var(--accent-1)] text-white'
                     : 'text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white'
                 }`}
               >

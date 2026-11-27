@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n               SELECT 1\n               FROM user_sessions cur\n               WHERE cur.id = $1\n                 AND cur.user_id = $2\n                 AND cur.created_at > NOW() - INTERVAL '5 minutes'\n                 AND EXISTS (\n                     SELECT 1\n                     FROM user_sessions prev\n                     WHERE prev.user_id = $2\n                       AND prev.id <> cur.id\n                       AND prev.created_at > NOW() - INTERVAL '30 days'\n                       AND (\n                           prev.created_at < NOW() - INTERVAL '1 hour'\n                           OR COALESCE(prev.user_agent, '') <> COALESCE(cur.user_agent, '')\n                       )\n                 )\n           ) AS \"flagged!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "flagged!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c1da8fad5188b2d41aaae1a29a26d2a675b65bef242d1382ac1129612abf2008"
+}

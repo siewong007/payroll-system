@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id\n           FROM attendance_records\n           WHERE company_id = $1\n             AND employee_id <> $2\n             AND (\n                 (check_in_cookie_id = $3 AND check_in_at > NOW() - INTERVAL '24 hours')\n                 OR (check_out_cookie_id = $3 AND check_out_at > NOW() - INTERVAL '24 hours')\n             )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "86fef17d17569918363e470872945b0dd17a27e002c2abe49e5084acd6673303"
+}

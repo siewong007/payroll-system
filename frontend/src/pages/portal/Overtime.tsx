@@ -266,7 +266,7 @@ export function Overtime() {
               }}
               className={`shrink-0 min-h-11 sm:min-h-9 px-4 py-1.5 rounded-full text-sm font-medium transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                 isActive
-                  ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
+                  ? 'bg-[var(--accent-1)] text-white'
                   : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:text-gray-900 dark:hover:text-white'
               }`}
             >

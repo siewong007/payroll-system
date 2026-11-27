@@ -145,7 +145,7 @@ export function EmployeePicker({
   return (
     <div className="relative" ref={containerRef}>
       <div className="relative">
-        <Search className="w-3.5 h-3.5 text-gray-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <Search className="w-3.5 h-3.5 text-[var(--subtle-foreground)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
           id={id}
           type="text"
@@ -204,7 +204,7 @@ export function EmployeePicker({
             }
           }}
           placeholder={placeholder ?? t('employees.pickerPlaceholder')}
-          className={`w-full pl-9 ${showClear ? 'pr-10' : 'pr-3'} py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500 rounded-lg text-sm focus:ring-1 focus:ring-black dark:focus:ring-slate-400 outline-none disabled:opacity-60 disabled:cursor-not-allowed`}
+          className={`form-input !pl-9 ${showClear ? '!pr-10' : '!pr-3'} disabled:opacity-60 disabled:cursor-not-allowed`}
         />
         {showClear && (
           <button
@@ -214,7 +214,7 @@ export function EmployeePicker({
               setSelectedLabel('');
               setActiveIndex(-1);
             }}
-            className="absolute right-0.5 top-1/2 -translate-y-1/2 min-h-10 min-w-10 flex items-center justify-center rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+            className="absolute right-0.5 top-1/2 -translate-y-1/2 min-h-9 min-w-9 flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
             aria-label={t('common.clear')}
             title={t('common.clear')}
           >
@@ -227,12 +227,12 @@ export function EmployeePicker({
         <div
           id={listboxId}
           role="listbox"
-          className="absolute z-20 mt-1 w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-56 overflow-y-auto"
+          className="absolute z-20 mt-1 w-full bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-md max-h-56 overflow-y-auto"
         >
           {isLoading ? (
-            <div className="px-3 py-3 text-sm text-gray-400 dark:text-slate-500">{t('employees.searching')}</div>
+            <div className="px-3 py-2.5 text-[13px] text-[var(--muted-foreground)]">{t('employees.searching')}</div>
           ) : isError ? (
-            <div className="px-3 py-3 text-sm text-red-600 dark:text-red-400 flex items-center justify-between gap-2">
+            <div className="px-3 py-2.5 text-[13px] text-red-600 dark:text-red-400 flex items-center justify-between gap-2">
               <span className="truncate">{getErrorMessage(error, t('employees.searchFailed'))}</span>
               <button
                 type="button"
@@ -243,7 +243,7 @@ export function EmployeePicker({
               </button>
             </div>
           ) : employees.length === 0 ? (
-            <div className="px-3 py-3 text-sm text-gray-400 dark:text-slate-500">{t('employees.noMatch')}</div>
+            <div className="px-3 py-2.5 text-[13px] text-[var(--muted-foreground)]">{t('employees.noMatch')}</div>
           ) : (
             employees.map((emp, idx) => {
               const isSelected = value === emp.id;
@@ -260,16 +260,16 @@ export function EmployeePicker({
                   key={emp.id}
                   onMouseEnter={() => setActiveIndex(idx)}
                   onClick={() => handleSelect(emp)}
-                  className={`w-full text-left px-3 py-2.5 transition-colors ${
+                  className={`w-full text-left px-3 py-2 transition-colors ${
                     isActiveOption
-                      ? 'bg-gray-100 dark:bg-slate-800'
+                      ? 'bg-[var(--surface-subtle)]'
                       : isSelected
-                      ? 'bg-gray-50 dark:bg-slate-800/60'
-                      : 'hover:bg-gray-50 dark:hover:bg-slate-800/70'
+                      ? 'bg-[var(--surface-subtle)]/70'
+                      : 'hover:bg-[var(--surface-subtle)]/60'
                   }`}
                 >
-                  <div className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{emp.full_name}</div>
-                  <div className="text-xs text-gray-500 dark:text-slate-400 truncate">
+                  <div className="text-[13px] font-medium text-[var(--foreground)] truncate">{emp.full_name}</div>
+                  <div className="text-xs text-[var(--muted-foreground)] truncate">
                     {emp.employee_number}{emp.department ? ` · ${emp.department}` : ''}
                   </div>
                 </button>
@@ -279,7 +279,7 @@ export function EmployeePicker({
           {/* The `total` nobody was reading is what turns an invisible
               truncation into a visible one. */}
           {data && data.total > employees.length && (
-            <div className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500 border-t border-gray-100 dark:border-slate-800">
+            <div className="px-3 py-1.5 text-xs text-[var(--subtle-foreground)] border-t border-[var(--border)]">
               {t('employees.showingPartial', { shown: employees.length, total: data.total })}
             </div>
           )}

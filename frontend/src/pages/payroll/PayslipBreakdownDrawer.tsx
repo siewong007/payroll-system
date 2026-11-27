@@ -89,21 +89,21 @@ export function PayslipBreakdownDrawer({
   const totalClaims = Number(data?.item.total_claims ?? 0);
 
   const drawer = (
-    <div className="animate-fade-in fixed inset-0 z-[55] flex justify-end bg-slate-950/50 backdrop-blur-sm" onClick={onClose}>
+    <div className="animate-fade-in fixed inset-0 z-[55] flex justify-end bg-black/45" onClick={onClose}>
       <div
         ref={drawerRef}
-        className="animate-slide-in-right flex h-full w-full max-w-lg flex-col overflow-y-auto bg-white dark:bg-slate-900 shadow-2xl ring-1 ring-black/5 dark:ring-white/10"
+        className="animate-slide-in-right flex h-full w-full max-w-lg flex-col overflow-y-auto bg-[var(--card)] border-l border-[var(--border)]"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-6 py-3.5">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--border)] bg-[var(--card)] px-5 py-3.5">
           <div className="min-w-0 pr-2">
-            <h2 id={titleId} className="font-semibold text-gray-900 dark:text-slate-100 truncate">
+            <h2 id={titleId} className="font-semibold text-[var(--foreground)] truncate">
               {data?.employee_name ?? t('payroll.breakdown.title')}
             </h2>
-            {data && <p className="text-xs text-gray-500 dark:text-slate-400">{data.employee_number}</p>}
+            {data && <p className="text-xs text-[var(--muted-foreground)]">{data.employee_number}</p>}
           </div>
           <button
             ref={closeButtonRef}
@@ -153,14 +153,14 @@ export function PayslipBreakdownDrawer({
                   <LineSection
                     title={t('payroll.breakdown.reimbursements')}
                     lines={reimbursements}
-                    tone="text-teal-700 dark:text-teal-300"
+                    tone="text-[var(--accent-1)]"
                   />
                 )}
                 <LineSection title={t('payroll.breakdown.deductions')} lines={deductions} tone="text-red-600 dark:text-red-400" />
               </>
             )}
 
-            <div className="space-y-2 rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-slate-950/60 p-4">
+            <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--surface-subtle)] p-4">
               <TotalRow label={t('payroll.breakdown.grossSalary')} value={data.item.gross_salary} />
               <TotalRow label={t('payroll.breakdown.totalDeductions')} value={data.item.total_deductions} negative />
               {totalClaims > 0 && (

@@ -43,9 +43,34 @@ export function revokeKioskCredential(id: string, stepUp: StepUpCredentials): Pr
  *
  * Returns the same shape as the authenticated `generateQrToken`.
  */
+export interface KioskCheckInPayload {
+  personal_token: string;
+  photo_base64?: string;
+}
+
+export interface KioskCheckInResponse {
+  action: 'check_in' | 'check_out' | string;
+  employee_name: string;
+  employee_number: string;
+  timestamp: string;
+  status: string;
+  photo_captured: boolean;
+}
+
 export function fetchKioskQr(kioskKey: string): Promise<QrTokenResponse> {
   return api
     .post('/attendance/kiosk/qr', null, {
+      headers: { Authorization: `Kiosk ${kioskKey}` },
+    })
+    .then((r) => r.data);
+}
+
+export function submitKioskCheckIn(
+  kioskKey: string,
+  payload: KioskCheckInPayload,
+): Promise<KioskCheckInResponse> {
+  return api
+    .post('/attendance/kiosk/check-in', payload, {
       headers: { Authorization: `Kiosk ${kioskKey}` },
     })
     .then((r) => r.data);

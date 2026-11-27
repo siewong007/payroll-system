@@ -16,10 +16,10 @@ export function AppearanceSwitcher({ darkRail = false }: { darkRail?: boolean })
     <div
       role="group"
       aria-label={t('ux.appearance.label')}
-      className={`inline-flex w-full items-center rounded-xl p-1 text-xs ${
+      className={`inline-flex w-full items-center rounded-md p-0.5 text-xs ${
         darkRail
-          ? 'bg-white/[0.06] ring-1 ring-white/10'
-          : 'bg-gray-100/90 ring-1 ring-gray-200/70 dark:bg-slate-800/80 dark:ring-slate-700'
+          ? 'bg-white/[0.06] border border-white/10'
+          : 'bg-[var(--surface-subtle)] border border-[var(--border)]'
       }`}
     >
       {OPTIONS.map(({ mode: itemMode, icon: Icon, labelKey }) => {
@@ -30,14 +30,14 @@ export function AppearanceSwitcher({ darkRail = false }: { darkRail?: boolean })
             type="button"
             onClick={() => setMode(itemMode)}
             aria-pressed={active}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 font-medium transition-all ${
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-[5px] px-2 py-1 font-medium transition-colors ${
               active
                 ? darkRail
-                  ? 'bg-white/15 text-white shadow-sm'
-                  : 'bg-white text-gray-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                  ? 'bg-white/15 text-white'
+                  : 'bg-[var(--card)] text-[var(--foreground)] shadow-[0_1px_2px_rgba(0,0,0,0.05)]'
                 : darkRail
-                  ? 'text-slate-400 hover:text-slate-200'
-                  : 'text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  ? 'text-zinc-400 hover:text-zinc-200'
+                  : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
             }`}
           >
             <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

@@ -78,19 +78,19 @@ export function LegalPage() {
         : t('legal.terms.subtitle');
 
   return (
-    <div className="min-h-[100dvh] bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-      <header className="sticky top-0 z-30 border-b border-slate-200/80 dark:border-slate-800 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl pt-[env(safe-area-inset-top)]">
+    <div className="min-h-[100dvh] bg-[var(--background)] text-[var(--foreground)]">
+      <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--card)] pt-[env(safe-area-inset-top)]">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 min-h-14 py-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <Link
               to={backHref}
-              className="inline-flex items-center gap-1.5 min-h-11 text-sm font-medium text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white rounded-xl px-1.5 -ml-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors shrink-0"
+              className="inline-flex items-center gap-1.5 min-h-11 text-sm font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg px-1.5 -ml-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors shrink-0"
             >
               <ArrowLeft className="w-4 h-4" aria-hidden="true" />
               <span>{isAuthenticated ? t('legal.header.backToApp') : t('legal.header.backToLogin')}</span>
             </Link>
-            <span aria-hidden="true" className="hidden md:inline text-slate-300 dark:text-slate-700">|</span>
-            <BrandLogo variant="lockup-dark" className="hidden md:block h-7 w-auto rounded-lg" />
+            <span aria-hidden="true" className="hidden md:inline text-[var(--border)]">|</span>
+            <BrandLogo variant="lockup-auto" className="hidden md:block h-7 w-auto rounded-md" />
           </div>
 
           <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto justify-between sm:justify-end">
@@ -106,22 +106,22 @@ export function LegalPage() {
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
         <div className="mb-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200/80 dark:border-indigo-500/30 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-3">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--accent-1)] mb-3">
             <FileCheck2 className="w-3.5 h-3.5" aria-hidden="true" />
             <span>{t('legal.header.badge')}</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--foreground)]">
             {pageTitle}
           </h1>
-          <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-slate-300 max-w-3xl">
+          <p className="mt-2 text-sm sm:text-base text-[var(--muted-foreground)] max-w-3xl">
             {pageSubtitle}
           </p>
-          <p className="mt-2 text-xs font-medium text-slate-600 dark:text-slate-400">
+          <p className="mt-2 text-xs font-medium text-[var(--muted-foreground)]">
             {t('legal.header.effectiveDate')}
           </p>
         </div>
 
-        <nav className="flex flex-wrap gap-2 mb-8 border-b border-slate-200 dark:border-slate-800 pb-4">
+        <nav className="flex flex-wrap gap-2 mb-8 border-b border-[var(--border)] pb-4">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const selected = activeTab === tab.id;
@@ -130,10 +130,10 @@ export function LegalPage() {
                 key={tab.id}
                 to={tab.href}
                 aria-current={selected ? 'page' : undefined}
-                className={`inline-flex items-center gap-2 min-h-11 rounded-xl px-4 py-2.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all ${
+                className={`inline-flex items-center gap-2 min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors ${
                   selected
-                    ? 'bg-slate-900 text-white dark:bg-indigo-500 dark:text-white shadow-sm'
-                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                    ? 'bg-[var(--accent-1)] text-white border border-[var(--accent-1)]'
+                    : 'bg-[var(--card)] text-[var(--muted-foreground)] border border-[var(--border)] hover:text-[var(--foreground)] hover:border-[var(--foreground)]/30'
                 }`}
               >
                 <Icon className="w-4 h-4" aria-hidden="true" />
@@ -147,12 +147,12 @@ export function LegalPage() {
           {sections.map((section) => (
             <section
               key={section.titleKey}
-              className="rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/70 p-5 sm:p-6 shadow-xs"
+              className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 sm:p-6"
             >
-              <h2 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white mb-2">
+              <h2 className="text-base sm:text-lg font-semibold text-[var(--foreground)] mb-2">
                 {t(section.titleKey)}
               </h2>
-              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+              <p className="text-sm leading-relaxed text-[var(--muted-foreground)]">
                 {t(section.bodyKey)}
               </p>
             </section>

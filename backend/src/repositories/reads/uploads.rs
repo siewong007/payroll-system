@@ -43,7 +43,12 @@ pub async fn find_references(
         UNION ALL
         SELECT 'company_logo'::text, NULL::uuid, FALSE
            FROM companies
-           WHERE id = $1 AND logo_url = $2"#,
+           WHERE id = $1 AND logo_url = $2
+        UNION ALL
+        SELECT 'attendance_photo'::text, employee_id, FALSE
+           FROM attendance_records
+           WHERE company_id = $1
+             AND (check_in_photo_url = $2 OR check_out_photo_url = $2)"#,
         company_id,
         file_url,
     )

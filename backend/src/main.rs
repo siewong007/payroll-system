@@ -524,6 +524,57 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
+            match payroll_system::services::attendance_service::purge_expired_attendance_photos(
+                &cleanup_pool,
+            )
+            .await
+            {
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "attendance-photo retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge expired attendance photos: {}", e);
+                    cleanup_errors.push(format!("attendance_photos: {e}"));
+                }
+            }
+
+            match payroll_system::repositories::attendance_device_challenges::purge_expired(
+                &cleanup_pool,
+            )
+            .await
+            {
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "attendance-device-challenges cleanup: completed");
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to purge expired attendance device challenges: {}",
+                        e
+                    );
+                    cleanup_errors.push(format!("attendance_device_challenges: {e}"));
+                }
+            }
+
+            match payroll_system::repositories::attendance_personal_qr_tokens::purge_expired(
+                &cleanup_pool,
+            )
+            .await
+            {
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "attendance-personal-qr cleanup: completed");
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to purge expired attendance personal QR tokens: {}",
+                        e
+                    );
+                    cleanup_errors.push(format!("attendance_personal_qr_tokens: {e}"));
+                }
+            }
+
             let err_summary = if cleanup_errors.is_empty() {
                 None
             } else {

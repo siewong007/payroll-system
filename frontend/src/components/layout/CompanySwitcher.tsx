@@ -64,40 +64,40 @@ export function CompanySwitcher() {
   };
 
   return (
-    <div ref={ref} className="relative px-3 mt-3 mb-1">
+    <div ref={ref} className="relative px-2.5 pt-2.5 pb-1">
       <button
         type="button"
         onClick={() => setOpen(!open)}
         disabled={switching}
         aria-expanded={open}
         aria-haspopup="listbox"
-        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 transition-all-fast text-left"
+        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md border border-[var(--border)] bg-[var(--card)] hover:border-[var(--border-strong)] transition-all-fast text-left"
       >
-        <Building2 className="w-4 h-4 text-indigo-300 shrink-0" />
-        <span className="text-sm font-medium text-slate-200 truncate flex-1">
+        <Building2 className="w-3.5 h-3.5 text-[var(--accent-1)] shrink-0" />
+        <span className="text-xs font-medium text-[var(--foreground)] truncate flex-1">
           {switching ? t('common.switching') : current?.name || t('common.selectCompany')}
         </span>
         <ChevronDown
-          className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-[var(--muted-foreground)] transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
       {open && (
-        <div className="animate-drop-in glass-dark absolute left-3 right-3 top-full mt-1.5 rounded-xl z-50 py-1 max-h-48 overflow-y-auto scrollbar-thin">
+        <div className="animate-drop-in absolute left-2.5 right-2.5 top-full mt-1 rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-md z-50 py-1 max-h-48 overflow-y-auto scrollbar-thin">
           {companies.map((c) => {
             const isCurrent = c.id === user?.company_id;
             return (
               <button
                 key={c.id}
                 onClick={() => handleSwitch(c.id)}
-                className={`w-full flex items-center gap-2 text-left px-3 py-2.5 text-sm transition-colors ${
+                className={`w-full flex items-center gap-2 text-left px-3 py-2 text-xs transition-colors ${
                   isCurrent
-                    ? 'bg-indigo-500/15 text-indigo-200 font-medium'
-                    : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                    ? 'bg-[var(--accent-soft)] text-[var(--foreground)] font-medium'
+                    : 'text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)]'
                 }`}
               >
                 <span className="truncate flex-1">{c.name}</span>
-                {isCurrent && <Check className="w-3.5 h-3.5 text-indigo-300 shrink-0" />}
+                {isCurrent && <Check className="w-3.5 h-3.5 text-[var(--accent-1)] shrink-0" />}
               </button>
             );
           })}

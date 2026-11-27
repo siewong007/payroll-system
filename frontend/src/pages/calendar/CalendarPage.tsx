@@ -267,21 +267,21 @@ export function CalendarPage() {
           onClick={() => setSelectedDay(day)}
           aria-pressed={isSelected}
           aria-label={formatDateLong(new Date(selectedYear, selectedMonth - 1, day))}
-          className={`min-h-12 lg:h-24 text-left align-top border border-gray-100 dark:border-slate-800 p-1 lg:p-1.5 overflow-hidden flex flex-col justify-between lg:justify-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-inset ${
+          className={`min-h-12 lg:h-24 text-left align-top border border-[var(--border)] p-1 lg:p-1.5 overflow-hidden flex flex-col justify-between lg:justify-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-inset ${
             isSelected
-              ? 'bg-indigo-50/70 dark:bg-indigo-500/15 ring-2 ring-[var(--accent-1)] ring-inset'
+              ? 'bg-[var(--accent-soft)] ring-1 ring-[var(--accent-1)] ring-inset'
               : isOff
-                ? 'bg-gray-50 dark:bg-slate-800/50'
-                : 'bg-white dark:bg-slate-900 hover:bg-gray-50/60 dark:hover:bg-slate-800/40'
+                ? 'bg-[var(--surface-subtle)]'
+                : 'bg-[var(--card)] hover:bg-[var(--surface-subtle)]/70'
           }`}
         >
           <div
             className={`text-xs font-medium leading-none tabular-nums ${
               isToday
-                ? 'inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold'
+                ? 'inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent-1)] text-white font-semibold'
                 : isOff
-                  ? 'text-gray-500 dark:text-slate-400'
-                  : 'text-gray-700 dark:text-slate-200'
+                  ? 'text-[var(--muted-foreground)]'
+                  : 'text-[var(--foreground)]'
             }`}
           >
             {day}

@@ -324,8 +324,8 @@ function CompanyDetails() {
           </div>
           <div className="card !p-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center shrink-0">
-                <FolderOpen className="w-5 h-5 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+              <div className="w-10 h-10 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
+                <FolderOpen className="w-5 h-5 text-[var(--accent-1)]" aria-hidden="true" />
               </div>
               <div className="min-w-0">
                 <p className="text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">{formatNumber(stats.total_departments)}</p>

@@ -20,21 +20,21 @@ export function AppInstallCard() {
           <img
             src="/icons/icon-192.png"
             alt=""
-            width={40}
-            height={40}
-            className="w-10 h-10 rounded-xl shadow-xs shrink-0"
+            width={36}
+            height={36}
+            className="w-9 h-9 rounded-lg border border-[var(--border)] shrink-0"
           />
-          <div className="min-w-0 space-y-1.5">
+          <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="section-title">{t('pwa.installCard.title')}</h2>
               {isStandalone && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="badge badge-approved gap-1">
+                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
                   {t('pwa.installCard.installedBadge')}
                 </span>
               )}
             </div>
-            <p className="text-sm text-gray-500 dark:text-slate-400">
+            <p className="text-[13px] text-[var(--muted-foreground)]">
               {isStandalone
                 ? t('pwa.installCard.installedDesc')
                 : t(hintKey)}

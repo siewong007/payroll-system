@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH cookie_events AS (\n               SELECT (ar.check_in_at AT TIME ZONE $4)::date AS local_date,\n                      ar.check_in_cookie_id AS cookie_id,\n                      ar.employee_id,\n                      ar.check_in_at AS event_at\n               FROM attendance_records ar\n               WHERE ar.company_id = $1\n                 AND ar.check_in_cookie_id IS NOT NULL\n                 AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4\n                 AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4\n               UNION ALL\n               SELECT (ar.check_out_at AT TIME ZONE $4)::date AS local_date,\n                      ar.check_out_cookie_id AS cookie_id,\n                      ar.employee_id,\n                      ar.check_out_at AS event_at\n               FROM attendance_records ar\n               WHERE ar.company_id = $1\n                 AND ar.check_out_cookie_id IS NOT NULL\n                 AND ar.check_out_at IS NOT NULL\n                 AND ar.check_out_at >= ($2::date)::timestamp AT TIME ZONE $4\n                 AND ar.check_out_at < ($3::date + 1)::timestamp AT TIME ZONE $4\n           ),\n           per_emp_day AS (\n               SELECT local_date, cookie_id, employee_id, MIN(event_at) AS first_event_at\n               FROM cookie_events\n               GROUP BY 1, 2, 3\n           ),\n           shared AS (\n               SELECT local_date, cookie_id\n               FROM per_emp_day\n               GROUP BY 1, 2\n               HAVING COUNT(*) >= 2\n           )\n           SELECT s.local_date AS \"local_date!\",\n                  SUBSTRING(encode(sha256(s.cookie_id::text::bytea), 'hex') FROM 1 FOR 10) AS \"device_tag!\",\n                  ped.employee_id AS \"employee_id!\",\n                  e.employee_number AS \"employee_number!\",\n                  e.full_name AS \"full_name!\",\n                  ped.first_event_at AS \"check_in_at!\"\n           FROM shared s\n           JOIN per_emp_day ped ON ped.local_date = s.local_date AND ped.cookie_id = s.cookie_id\n           JOIN employees e ON e.id = ped.employee_id AND e.company_id = $1\n           ORDER BY s.local_date DESC, \"device_tag!\", ped.first_event_at ASC\n           LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "local_date!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "device_tag!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "employee_number!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "employee_number"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "full_name!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "check_in_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "0f19304b9f1f9f68503fbdd3e72b74d0996c2e73938141093e64a165fd56e4f0"
+}

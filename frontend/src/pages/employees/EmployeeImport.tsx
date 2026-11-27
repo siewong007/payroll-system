@@ -157,12 +157,12 @@ export function EmployeeImport() {
             <li key={s} className="flex items-center gap-2">
               <div
                 aria-current={isCurrent ? 'step' : undefined}
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold tabular-nums shrink-0 ${
+                className={`w-7 h-7 rounded-md flex items-center justify-center text-xs font-semibold tabular-nums shrink-0 ${
                   isCurrent
-                    ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
+                    ? 'bg-[var(--accent-1)] text-white'
                     : isDone
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
-                    : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-400'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+                    : 'bg-[var(--surface-subtle)] text-[var(--muted-foreground)] border border-[var(--border)]'
                 }`}
               >
                 {i + 1}

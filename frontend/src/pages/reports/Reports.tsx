@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -26,9 +26,15 @@ import { formatMYR, formatNumber, monthName } from '@/lib/format';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
 import { SummaryField } from './ReportShared';
-import { LeaveEntitlementReport } from './LeaveEntitlementReport';
-import { ClaimsSummaryReport } from './ClaimsSummaryReport';
-import { EaFormTab } from './EaFormTab';
+const LeaveEntitlementReport = lazy(() =>
+  import('./LeaveEntitlementReport').then((m) => ({ default: m.LeaveEntitlementReport }))
+);
+const ClaimsSummaryReport = lazy(() =>
+  import('./ClaimsSummaryReport').then((m) => ({ default: m.ClaimsSummaryReport }))
+);
+const EaFormTab = lazy(() =>
+  import('./EaFormTab').then((m) => ({ default: m.EaFormTab }))
+);
 import { getLeaveEligibility } from './leaveReportHelpers';
 
 const fmt = formatMYR;
@@ -803,70 +809,76 @@ export function Reports() {
 
         {/* Leave Entitlement Report */}
         {tab === 'leave' && (
-          <LeaveEntitlementReport
-            data={leaveQuery.data}
-            isLoading={leaveQuery.isLoading}
-            isError={leaveQuery.isError}
-            error={leaveQuery.error}
-            onRetry={() => void leaveQuery.refetch()}
-            year={year}
-            onExport={() => {
-              if (!leaveQuery.data) return;
-              exportCSV(
-                // i18n-ok: CSV file content for downstream tooling, not UI copy.
-                ['Employee', 'ID', 'Department', 'Leave Type', 'Status', 'Entitled', 'Taken', 'Pending', 'Balance'],
-                leaveQuery.data.map((r) => {
-                  const elig = getLeaveEligibility(t, r.leave_type_name, r.gender, r.marital_status, r.num_children);
-                  return [
-                    r.employee_name, r.employee_number, r.department,
-                    // i18n-ok: CSV cell values, not UI copy.
-                    r.leave_type_name, elig.eligible ? 'Eligible' : elig.reason || 'Not eligible',
-                    r.entitled_days, r.taken_days, r.pending_days, r.balance,
-                  ];
-                }),
-                `leave-entitlement-${year}.csv`
-              );
-            }}
-          />
+          <Suspense fallback={null}>
+            <LeaveEntitlementReport
+              data={leaveQuery.data}
+              isLoading={leaveQuery.isLoading}
+              isError={leaveQuery.isError}
+              error={leaveQuery.error}
+              onRetry={() => void leaveQuery.refetch()}
+              year={year}
+              onExport={() => {
+                if (!leaveQuery.data) return;
+                exportCSV(
+                  // i18n-ok: CSV file content for downstream tooling, not UI copy.
+                  ['Employee', 'ID', 'Department', 'Leave Type', 'Status', 'Entitled', 'Taken', 'Pending', 'Balance'],
+                  leaveQuery.data.map((r) => {
+                    const elig = getLeaveEligibility(t, r.leave_type_name, r.gender, r.marital_status, r.num_children);
+                    return [
+                      r.employee_name, r.employee_number, r.department,
+                      // i18n-ok: CSV cell values, not UI copy.
+                      r.leave_type_name, elig.eligible ? 'Eligible' : elig.reason || 'Not eligible',
+                      r.entitled_days, r.taken_days, r.pending_days, r.balance,
+                    ];
+                  }),
+                  `leave-entitlement-${year}.csv`
+                );
+              }}
+            />
+          </Suspense>
         )}
 
         {/* EA Form */}
         {tab === 'ea_form' && canViewStatutory && (
-          <EaFormTab
-            data={eaQuery.data}
-            isLoading={eaQuery.isLoading}
-            isError={eaQuery.isError}
-            error={eaQuery.error}
-            onRetry={() => void eaQuery.refetch()}
-            year={year}
-          />
+          <Suspense fallback={null}>
+            <EaFormTab
+              data={eaQuery.data}
+              isLoading={eaQuery.isLoading}
+              isError={eaQuery.isError}
+              error={eaQuery.error}
+              onRetry={() => void eaQuery.refetch()}
+              year={year}
+            />
+          </Suspense>
         )}
 
         {/* Claims Report */}
         {tab === 'claims' && (
-          <ClaimsSummaryReport
-            data={claimsQuery.data}
-            isLoading={claimsQuery.isLoading}
-            isError={claimsQuery.isError}
-            error={claimsQuery.error}
-            onRetry={() => void claimsQuery.refetch()}
-            year={year}
-            onExport={() => {
-              if (!claimsQuery.data) return;
-              exportCSV(
-                // i18n-ok: CSV file content for downstream tooling, not UI copy.
-                ['Employee', 'ID', 'Department', 'Total Claims', 'Total Amount', 'Approved', 'Approved Amount', 'Pending', 'Pending Amount', 'Rejected'],
-                claimsQuery.data.map((r) => [
-                  r.employee_name, r.employee_number, r.department,
-                  r.total_claims, senToPlainRm(r.total_amount),
-                  r.approved_count, senToPlainRm(r.approved_amount),
-                  r.pending_count, senToPlainRm(r.pending_amount),
-                  r.rejected_count,
-                ]),
-                `claims-report-${year}.csv`
-              );
-            }}
-          />
+          <Suspense fallback={null}>
+            <ClaimsSummaryReport
+              data={claimsQuery.data}
+              isLoading={claimsQuery.isLoading}
+              isError={claimsQuery.isError}
+              error={claimsQuery.error}
+              onRetry={() => void claimsQuery.refetch()}
+              year={year}
+              onExport={() => {
+                if (!claimsQuery.data) return;
+                exportCSV(
+                  // i18n-ok: CSV file content for downstream tooling, not UI copy.
+                  ['Employee', 'ID', 'Department', 'Total Claims', 'Total Amount', 'Approved', 'Approved Amount', 'Pending', 'Pending Amount', 'Rejected'],
+                  claimsQuery.data.map((r) => [
+                    r.employee_name, r.employee_number, r.department,
+                    r.total_claims, senToPlainRm(r.total_amount),
+                    r.approved_count, senToPlainRm(r.approved_amount),
+                    r.pending_count, senToPlainRm(r.pending_amount),
+                    r.rejected_count,
+                  ]),
+                  `claims-report-${year}.csv`
+                );
+              }}
+            />
+          </Suspense>
         )}
       </div>
     </div>

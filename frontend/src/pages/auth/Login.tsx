@@ -192,20 +192,20 @@ export function Login() {
   const isQrScanRedirect = Boolean(redirectTo?.startsWith('/attendance/scan'));
 
   return (
-    <AuthLayout variant="aurora">
-      <div className="bg-white/95 dark:bg-slate-900/95 ring-1 ring-white/40 dark:ring-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 text-gray-900 dark:text-slate-100">
+    <AuthLayout variant="subtle">
+      <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl p-6 sm:p-7 text-[var(--foreground)] shadow-sm">
         {/* Logo */}
         <div className="text-center mb-6">
-          <BrandLogo variant="lockup-dark" priority className="h-12 w-auto mx-auto mb-4 rounded-xl" />
-          <p className="text-sm text-gray-600 dark:text-slate-300 mt-1">{t('auth.tagline')}</p>
+          <BrandLogo variant="lockup-auto" priority className="h-10 w-auto mx-auto mb-3 rounded-lg" />
+          <p className="text-sm text-[var(--muted-foreground)] mt-1">{t('auth.tagline')}</p>
         </div>
 
         {isQrScanRedirect && (
-          <div className="mb-5 flex items-start gap-3 rounded-2xl border border-teal-200 dark:border-teal-500/30 bg-teal-50 dark:bg-teal-500/10 p-3.5 text-left">
-            <ScanLine className="w-5 h-5 text-teal-600 dark:text-teal-300 shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="mb-5 flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] p-3.5 text-left">
+            <ScanLine className="w-5 h-5 text-[var(--accent-1)] shrink-0 mt-0.5" aria-hidden="true" />
             <div className="text-xs leading-relaxed">
-              <p className="font-semibold text-teal-900 dark:text-teal-200">{t('auth.qrScanBannerTitle')}</p>
-              <p className="text-teal-800 dark:text-teal-300 mt-0.5">{t('auth.qrScanBannerBody')}</p>
+              <p className="font-semibold text-[var(--foreground)]">{t('auth.qrScanBannerTitle')}</p>
+              <p className="text-[var(--muted-foreground)] mt-0.5">{t('auth.qrScanBannerBody')}</p>
             </div>
           </div>
         )}
@@ -228,7 +228,7 @@ export function Login() {
                     setCodeValue('');
                     setError('');
                   }}
-                  className="min-h-11 inline-flex items-center text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-lg px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  className="min-h-11 inline-flex items-center text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   ← {t('auth.backToOptions')}
                 </button>
@@ -237,7 +237,7 @@ export function Login() {
                   <div
                     id="login-error"
                     role="alert"
-                    className="animate-fade-up bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-700 dark:text-red-300 text-sm px-4 py-3 rounded-xl"
+                    className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 text-sm px-3.5 py-2.5 rounded-lg"
                   >
                     {error}
                   </div>
@@ -281,7 +281,7 @@ export function Login() {
                 <button
                   type="submit"
                   disabled={anySubmitting}
-                  className="w-full min-h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-slate-900 to-slate-700 dark:from-indigo-600 dark:to-indigo-500 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all"
+                  className="btn-primary w-full min-h-11 justify-center rounded-lg"
                 >
                   {loading ? (
                     <>
@@ -298,7 +298,7 @@ export function Login() {
                 {/* Third-party identity stays on its own; reserve height while probing */}
                 {providersPending ? (
                   <div
-                    className="h-[44px] w-full rounded-xl bg-gray-100 dark:bg-slate-800 animate-pulse"
+                    className="h-11 w-full rounded-lg bg-[var(--surface-subtle)] animate-pulse"
                     aria-hidden="true"
                   />
                 ) : googleProvider ? (
@@ -307,7 +307,7 @@ export function Login() {
                       type="button"
                       onClick={handleGoogleLogin}
                       disabled={anySubmitting}
-                      className="w-full min-h-11 flex items-center justify-center gap-3 py-2.5 px-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-100 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-md hover:-translate-y-px disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all"
+                      className="w-full min-h-11 flex items-center justify-center gap-3 py-2.5 px-4 bg-[var(--card)] border border-[var(--border)] rounded-lg text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-subtle)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
                     >
                       {googleLoading ? (
                         <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
@@ -326,19 +326,19 @@ export function Login() {
 
                 <div className={`flex items-center gap-3 ${providersPending || googleProvider ? 'my-6' : 'mb-4 justify-center'}`}>
                   {(providersPending || googleProvider) && (
-                    <div className="h-px flex-1 bg-gray-200 dark:bg-slate-700" />
+                    <div className="h-px flex-1 bg-[var(--border)]" />
                   )}
                   <span
                     className={`text-xs ${
                       providersPending || googleProvider
-                        ? 'text-gray-500 dark:text-slate-400'
-                        : 'font-medium text-gray-600 dark:text-slate-300'
+                        ? 'text-[var(--muted-foreground)]'
+                        : 'font-medium text-[var(--muted-foreground)]'
                     }`}
                   >
                     {t('auth.otherWays')}
                   </span>
                   {(providersPending || googleProvider) && (
-                    <div className="h-px flex-1 bg-gray-200 dark:bg-slate-700" />
+                    <div className="h-px flex-1 bg-[var(--border)]" />
                   )}
                 </div>
 
@@ -347,7 +347,7 @@ export function Login() {
                     <div
                       id="login-error"
                       role="alert"
-                      className="animate-fade-up bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-700 dark:text-red-300 text-sm px-4 py-3 rounded-xl"
+                      className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 text-sm px-3.5 py-2.5 rounded-lg"
                     >
                       {error}
                     </div>
@@ -403,7 +403,7 @@ export function Login() {
                   <button
                     type="submit"
                     disabled={anySubmitting}
-                    className="w-full min-h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-slate-900 to-slate-700 dark:from-indigo-600 dark:to-indigo-500 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all"
+                    className="btn-primary w-full min-h-11 justify-center rounded-lg"
                   >
                     {loading ? (
                       <>
@@ -448,7 +448,7 @@ export function Login() {
                           type="button"
                           onClick={handlePasskeyLogin}
                           disabled={anySubmitting}
-                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-700 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all"
+                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-[var(--card)] border border-[var(--border)] rounded-lg text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-subtle)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
                         >
                           {passkeyLoading ? (
                             <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
@@ -466,7 +466,7 @@ export function Login() {
                           setCodeMethod('totp');
                         }}
                         disabled={anySubmitting}
-                        className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-700 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all"
+                        className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-[var(--card)] border border-[var(--border)] rounded-lg text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-subtle)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
                       >
                         <Smartphone className="w-5 h-5" aria-hidden="true" />
                         {t('auth.authenticator')}
@@ -479,7 +479,7 @@ export function Login() {
                           setCodeMethod('backup');
                         }}
                         disabled={anySubmitting}
-                        className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-700 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all"
+                        className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-[var(--card)] border border-[var(--border)] rounded-lg text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-subtle)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
                       >
                         <LifeBuoy className="w-5 h-5" aria-hidden="true" />
                         {t('auth.recoveryCode')}

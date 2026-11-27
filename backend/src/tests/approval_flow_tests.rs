@@ -1370,6 +1370,7 @@ async fn append_only_editor_ids_blocks_earlier_editor_after_second_editor() {
         can_view_approvals: true,
         can_view_documents: false,
         can_view_confidential: false,
+        can_view_attendance: true,
     };
 
     // 1. Claim: creator -> editor_a -> editor_b -> editor_a blocked, approver_c allowed.

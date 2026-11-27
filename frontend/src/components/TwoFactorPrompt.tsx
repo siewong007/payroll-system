@@ -55,11 +55,11 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
   return (
     <div className="space-y-5">
       <div className="text-center">
-        <div className="w-12 h-12 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3">
-          <ShieldCheck className="w-6 h-6 text-gray-500 dark:text-slate-300" />
+        <div className="w-11 h-11 bg-[var(--surface-subtle)] border border-[var(--border)] rounded-lg flex items-center justify-center mx-auto mb-3">
+          <ShieldCheck className="w-5 h-5 text-[var(--muted-foreground)]" />
         </div>
-        <p className="text-sm font-medium text-gray-900 dark:text-slate-100">{t('auth.twoFactor.title')}</p>
-        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+        <p className="text-sm font-medium text-[var(--foreground)]">{t('auth.twoFactor.title')}</p>
+        <p className="text-sm text-[var(--muted-foreground)] mt-1">
           {t('auth.twoFactor.prompt')}
         </p>
       </div>
@@ -113,7 +113,7 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
           <button
             type="button"
             onClick={onBack}
-            className="w-full min-h-11 inline-flex items-center justify-center rounded-xl text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
+            className="w-full min-h-10 inline-flex items-center justify-center rounded-lg text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
           >
             {t('auth.backToLogin')}
           </button>

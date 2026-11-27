@@ -14,7 +14,8 @@ import {
   Receipt,
   ScanLine,
   ShieldCheck,
-  Sparkles,
+  UserCircle,
+  Banknote,
   UserCheck,
   Users,
 } from 'lucide-react';
@@ -167,7 +168,7 @@ export function DashboardPage() {
       count: attention.late_count,
       icon: Clock,
       href: canViewAttendance ? '/attendance?status=late' : undefined,
-      tone: 'indigo' as const,
+      tone: 'accent' as const,
     },
     {
       key: 'outsideGeofence',
@@ -183,7 +184,7 @@ export function DashboardPage() {
       count: attention.manual_entry_count,
       icon: UserCheck,
       href: canViewAttendance ? '/attendance' : undefined,
-      tone: 'indigo' as const,
+      tone: 'accent' as const,
     },
   ].filter((item) => item.count > 0);
 
@@ -195,7 +196,7 @@ export function DashboardPage() {
     canViewApprovals && { label: t('nav.approvals'), href: '/approvals', icon: ClipboardCheck },
     canViewAttendance && { label: t('nav.attendance'), href: '/attendance', icon: ScanLine },
     { label: t('nav.company'), href: '/company', icon: Building2 },
-    Boolean(user?.employee_id) && { label: t('nav.myPortal'), href: '/portal/profile', icon: Sparkles },
+    Boolean(user?.employee_id) && { label: t('nav.myPortal'), href: '/portal/profile', icon: UserCircle },
   ].filter(Boolean) as { label: string; href: string; icon: typeof Users }[];
 
   return (
@@ -207,7 +208,7 @@ export function DashboardPage() {
           <div
             role="group"
             aria-label={t('ux.dashboard.windowGroupLabel')}
-            className="inline-flex items-center rounded-xl bg-white/80 dark:bg-slate-900/80 p-1 ring-1 ring-gray-200/80 dark:ring-slate-800 shadow-xs"
+            className="tab-group"
           >
             {WINDOW_CHOICES.map((days) => {
               const active = windowDays === days;
@@ -219,8 +220,8 @@ export function DashboardPage() {
                   aria-pressed={active}
                   className={`min-h-11 sm:min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                     active
-                      ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900 dark:text-slate-400 dark:hover:text-slate-100'
+                      ? 'bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] shadow-2xs'
+                      : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
                   }`}
                 >
                   {t('ux.dashboard.windowDays', { days })}
@@ -238,7 +239,7 @@ export function DashboardPage() {
           isPlaceholderData ? 'opacity-75 transition-opacity' : ''
         }`}
       >
-        <div className="card hover-lift flex items-start justify-between gap-3">
+        <div className="kpi-card flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
               {t('ux.dashboard.activeHeadcount')}
@@ -257,7 +258,7 @@ export function DashboardPage() {
 
         {canViewPayroll ? (
           <>
-            <div className="card hover-lift flex items-start justify-between gap-3">
+            <div className="kpi-card flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.latestPayroll')}
@@ -286,7 +287,7 @@ export function DashboardPage() {
               </div>
             </div>
 
-            <div className="card hover-lift flex items-start justify-between gap-3">
+            <div className="kpi-card flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.ytdGross')}
@@ -301,12 +302,12 @@ export function DashboardPage() {
                   {t('ux.dashboard.ytdGrossSub')}
                 </p>
               </div>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
-                <Sparkles className="h-5 w-5" aria-hidden="true" />
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-1)]">
+                <Banknote className="h-4 w-4" aria-hidden="true" />
               </div>
             </div>
 
-            <div className="card hover-lift flex items-start justify-between gap-3">
+            <div className="kpi-card flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.ytdStatutory')}
@@ -321,13 +322,13 @@ export function DashboardPage() {
                   {t('ux.dashboard.ytdStatutorySub')}
                 </p>
               </div>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-subtle)] border border-[var(--border)] text-[var(--muted-foreground)]">
                 <ShieldCheck className="h-5 w-5" aria-hidden="true" />
               </div>
             </div>
           </>
         ) : (
-          <div className="card hover-lift flex items-start justify-between gap-3">
+          <div className="kpi-card flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                 {t('ux.dashboard.departmentsTitle')}
@@ -363,7 +364,7 @@ export function DashboardPage() {
         </div>
 
         {attention.all_clear || attentionItems.length === 0 ? (
-          <div className="flex items-center gap-3.5 rounded-2xl border border-emerald-200/70 bg-emerald-50/70 px-4 py-4 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+          <div className="flex items-center gap-3.5 rounded-xl border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 px-4 py-3.5 text-emerald-900 dark:text-emerald-200">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
             </div>
@@ -383,11 +384,11 @@ export function DashboardPage() {
                   ? 'border-red-200/70 bg-red-50/70 text-red-900 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
                   : item.tone === 'amber'
                     ? 'border-amber-200/70 bg-amber-50/70 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
-                    : 'border-indigo-200/70 bg-indigo-50/70 text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200';
+                    : 'border-[var(--border)] bg-[var(--surface-subtle)] text-[var(--foreground)]';
               const content = (
                 <div
-                  className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 transition-all ${
-                    item.href ? 'hover:-translate-y-0.5' : ''
+                  className={`flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3 transition-colors ${
+                    item.href ? 'hover:bg-[var(--surface-subtle)]' : ''
                   } ${toneClass}`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -404,7 +405,7 @@ export function DashboardPage() {
                 <Link
                   key={item.key}
                   to={item.href}
-                  className="block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-1)]"
+                  className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-1)]"
                 >
                   {content}
                 </Link>
@@ -442,7 +443,7 @@ export function DashboardPage() {
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] transition-all duration-500"
+                        className="h-full rounded-full bg-[var(--accent-1)] transition-all duration-300"
                         style={{ width: `${widthPct}%` }}
                       />
                     </div>
@@ -491,7 +492,7 @@ export function DashboardPage() {
                 <Link
                   key={item.href}
                   to={item.href}
-                  className="flex min-h-11 sm:min-h-0 items-center justify-between rounded-xl border border-gray-100 dark:border-slate-800 bg-white/60 dark:bg-slate-900/50 px-3.5 py-2.5 text-sm font-medium text-gray-700 dark:text-slate-200 transition-all hover:border-[var(--accent-1)]/40 hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  className="flex min-h-11 sm:min-h-0 items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3.5 py-2.5 text-sm font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   <span className="inline-flex items-center gap-2.5">
                     <item.icon className="h-4 w-4 text-[var(--accent-1)]" aria-hidden="true" />

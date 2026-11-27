@@ -14,17 +14,17 @@ import type { NotificationStatus } from '@/lib/pwa';
 
 const STATUS_BADGE_STYLES: Record<NotificationStatus, string> = {
   default:
-    'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    'bg-[var(--surface-subtle)] text-[var(--muted-foreground)] border border-[var(--border)]',
   granted:
-    'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+    'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-500/12 dark:text-emerald-300 dark:border-emerald-500/25',
   denied:
-    'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+    'bg-red-50 text-red-800 border border-red-200 dark:bg-red-500/12 dark:text-red-300 dark:border-red-500/25',
   'ios-install-required':
-    'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
+    'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/25',
   'insecure-context':
-    'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
+    'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/25',
   unsupported:
-    'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+    'bg-[var(--surface-subtle)] text-[var(--muted-foreground)] border border-[var(--border)]',
 };
 
 const STATUS_KEY: Record<
@@ -206,15 +206,15 @@ export function NotificationActivationCard({ compact = false }: { compact?: bool
   if (compact) {
     return (
       <section
-        className={`card !p-3.5 sm:!px-5 sm:!py-3.5 @container ${
+        className={`card !p-3.5 sm:!px-4 sm:!py-3 @container ${
           isFullyActive
-            ? 'border-emerald-200/70 dark:border-emerald-500/25'
-            : 'border-[var(--accent-1)]/20'
+            ? 'border-emerald-200 dark:border-emerald-500/25'
+            : ''
         }`}
       >
         <div className="flex flex-col @md:flex-row @md:items-center justify-between gap-3">
           <div className="flex items-start @md:items-center gap-3 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-md border border-[var(--border)] bg-[var(--surface-subtle)] flex items-center justify-center shrink-0">
               <Icon
                 className="w-4 h-4 text-[var(--accent-1)]"
                 aria-hidden="true"
@@ -222,11 +222,11 @@ export function NotificationActivationCard({ compact = false }: { compact?: bool
             </div>
             <div className="min-w-0 space-y-0.5">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">
+                <h2 className="text-[13px] font-semibold text-[var(--foreground)]">
                   {t('pwa.notifications.cardTitle')}
                 </h2>
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_BADGE_STYLES[notificationStatus]}`}
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_BADGE_STYLES[notificationStatus]}`}
                 >
                   {notificationStatus === 'granted' && (
                     <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
@@ -235,7 +235,7 @@ export function NotificationActivationCard({ compact = false }: { compact?: bool
                 </span>
               </div>
               <p
-                className={`text-xs text-gray-500 dark:text-slate-400 ${
+                className={`text-xs text-[var(--muted-foreground)] ${
                   isFullyActive ? 'hidden sm:block' : ''
                 }`}
               >
@@ -253,29 +253,29 @@ export function NotificationActivationCard({ compact = false }: { compact?: bool
   return (
     <section className="card @container">
       <div className="flex flex-col @lg:flex-row @lg:items-center justify-between gap-4">
-        <div className="flex items-start gap-3.5 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-md border border-[var(--border)] bg-[var(--surface-subtle)] flex items-center justify-center shrink-0">
             <Icon
-              className="w-5 h-5 text-[var(--accent-1)]"
+              className="w-4 h-4 text-[var(--accent-1)]"
               aria-hidden="true"
             />
           </div>
-          <div className="min-w-0 space-y-1.5">
+          <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="section-title">{t('pwa.notifications.cardTitle')}</h2>
               <span
-                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE_STYLES[notificationStatus]}`}
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_BADGE_STYLES[notificationStatus]}`}
               >
                 {notificationStatus === 'granted' && (
-                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
                 )}
                 {badgeText}
               </span>
             </div>
-            <p className="text-sm text-gray-500 dark:text-slate-400">
+            <p className="text-[13px] text-[var(--muted-foreground)]">
               {t('pwa.notifications.cardDesc')}
             </p>
-            <p className="text-xs text-gray-500 dark:text-slate-400">
+            <p className="text-xs text-[var(--muted-foreground)]">
               {descriptionText}
             </p>
           </div>

@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useId, useRef, useCallback } from 'react';
 import { useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { RefreshCw, Wifi, Clock, ShieldAlert } from 'lucide-react';
+import { RefreshCw, Wifi, Clock, ShieldAlert, QrCode, Camera, CheckCircle2, XCircle } from 'lucide-react';
 import QRCode from 'qrcode';
-import { fetchKioskQr } from '@/api/kiosk';
+import type { Html5Qrcode as Html5QrcodeInstance } from 'html5-qrcode';
+import { fetchKioskQr, submitKioskCheckIn, type KioskCheckInResponse } from '@/api/kiosk';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { parsePersonalQrToken } from '@/lib/attendance';
 import { formatTimeSeconds, formatDateLong } from '@/lib/format';
+import { getErrorMessage } from '@/lib/utils';
 
 type Status =
   | { kind: 'loading' }
@@ -70,6 +73,18 @@ export function AttendanceKioskPublic() {
     }
   }, []);
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
+  const [mode, setMode] = useState<'qr' | 'camera'>('qr');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraBanner, setCameraBanner] = useState<
+    | { kind: 'ok'; data: KioskCheckInResponse }
+    | { kind: 'err'; message: string }
+    | null
+  >(null);
+  const readerId = `kiosk-cam-${useId().replace(/:/g, '')}`;
+  const scannerRef = useRef<Html5QrcodeInstance | null>(null);
+  const submittingCameraRef = useRef(false);
+  const recentTokenRef = useRef<{ token: string; at: number } | null>(null);
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [timeLeft, setTimeLeft] = useState(FALLBACK_TTL);
   const [retrying, setRetrying] = useState(false);
   const backoffRef = useRef(2000);
@@ -198,11 +213,155 @@ export function AttendanceKioskPublic() {
   }, [fetchToken]);
 
   useEffect(() => {
-    if (!kioskKey) return;
+    if (!kioskKey || mode !== 'qr') return;
     // Defer one microtask so the lint rule (and React Compiler) sees this as not
     // a synchronous render→setState chain.
     scheduleMint(0);
-  }, [kioskKey, scheduleMint]);
+    return () => {
+      if (mintTimerRef.current !== null) {
+        clearTimeout(mintTimerRef.current);
+        mintTimerRef.current = null;
+      }
+    };
+  }, [kioskKey, mode, scheduleMint]);
+
+  useEffect(() => {
+    if (!kioskKey || mode !== 'camera') return;
+    let cancelled = false;
+    setCameraError(null);
+
+    const captureFrame = (): string | undefined => {
+      const video = document.querySelector(`#${readerId} video`) as HTMLVideoElement | null;
+      if (!video || !video.videoWidth || !video.videoHeight) return undefined;
+      const scale = Math.min(1, 640 / video.videoWidth);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      let dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      if (dataUrl.length > 500 * 1024) {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+      }
+      return dataUrl;
+    };
+
+    const showBanner = (
+      next: { kind: 'ok'; data: KioskCheckInResponse } | { kind: 'err'; message: string },
+    ) => {
+      setCameraBanner(next);
+      if (bannerTimerRef.current !== null) clearTimeout(bannerTimerRef.current);
+      bannerTimerRef.current = setTimeout(() => {
+        if (!cancelled) setCameraBanner(null);
+      }, 4000);
+    };
+
+    const handleDecoded = (decodedText: string) => {
+      if (submittingCameraRef.current) return;
+      const personalToken = parsePersonalQrToken(decodedText);
+      if (!personalToken) return;
+      const nowMs = performance.now();
+      if (
+        recentTokenRef.current &&
+        recentTokenRef.current.token === personalToken &&
+        nowMs - recentTokenRef.current.at < 4500
+      ) {
+        return;
+      }
+      submittingCameraRef.current = true;
+      recentTokenRef.current = { token: personalToken, at: nowMs };
+      const photoBase64 = captureFrame();
+      void submitKioskCheckIn(kioskKey, {
+        personal_token: personalToken,
+        ...(photoBase64 ? { photo_base64: photoBase64 } : {}),
+      })
+        .then((res) => {
+          if (!cancelled) showBanner({ kind: 'ok', data: res });
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          const code = (err as { response?: { status?: number } }).response?.status;
+          if (code === 401) {
+            try {
+              window.sessionStorage.removeItem(KIOSK_SECRET_STORAGE_KEY);
+            } catch {
+              /* ignore */
+            }
+            setStatus({ kind: 'fatal', message: t('attendance.kiosk.disconnected') });
+            setMode('qr');
+            return;
+          }
+          showBanner({
+            kind: 'err',
+            message: getErrorMessage(err, t('attendance.kiosk.cameraCheckInFailed')),
+          });
+        })
+        .finally(() => {
+          submittingCameraRef.current = false;
+        });
+    };
+
+    const startCamera = async () => {
+      try {
+        const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+        if (cancelled) return;
+        const scanner = new Html5Qrcode(readerId, {
+          verbose: false,
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          useBarCodeDetectorIfSupported: true,
+        });
+        scannerRef.current = scanner;
+        await scanner.start(
+          { facingMode: 'user' },
+          {
+            fps: 10,
+            qrbox: (w, h) => {
+              const edge = Math.max(180, Math.round(Math.min(w, h) * 0.72));
+              return { width: edge, height: edge };
+            },
+            aspectRatio: 1,
+          },
+          handleDecoded,
+          () => {},
+        );
+        if (cancelled) {
+          await scanner.stop().catch(() => {});
+          try {
+            scanner.clear();
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCameraError(getErrorMessage(err, t('attendance.qr.cameraFailed')));
+        }
+      }
+    };
+
+    void startCamera();
+
+    return () => {
+      cancelled = true;
+      if (bannerTimerRef.current !== null) {
+        clearTimeout(bannerTimerRef.current);
+        bannerTimerRef.current = null;
+      }
+      const active = scannerRef.current;
+      scannerRef.current = null;
+      if (!active) return;
+      if (active.isScanning) {
+        active.stop().then(() => active.clear()).catch(() => {});
+      } else {
+        try {
+          active.clear();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+  }, [kioskKey, mode, readerId, t]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setStatus as a stable React setter.
 
   // Keep tablet screen awake and recover promptly on reconnect / wake-from-sleep.
   useEffect(() => {
@@ -306,37 +465,120 @@ export function AttendanceKioskPublic() {
   const isLow = timeLeft <= 10;
 
   return (
-    <main className="min-h-[100dvh] bg-gray-950 text-white flex flex-col items-center justify-center px-4 sm:px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pt-[calc(1.5rem+env(safe-area-inset-top))] sm:pb-[calc(1.5rem+env(safe-area-inset-bottom))] select-none overflow-x-clip">
-      <div className="w-full max-w-md sm:max-w-lg md:max-w-xl lg:max-w-4xl bg-gray-900 border border-gray-800 rounded-3xl p-6 sm:p-8 shadow-2xl grid grid-cols-1 lg:grid-cols-2 lg:items-center gap-6 lg:gap-10">
+    <main className="dark min-h-[100dvh] bg-[#09090B] text-white flex flex-col items-center justify-center px-4 sm:px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pt-[calc(1.5rem+env(safe-area-inset-top))] sm:pb-[calc(1.5rem+env(safe-area-inset-bottom))] select-none overflow-x-clip">
+      <div className="w-full max-w-md sm:max-w-lg md:max-w-xl lg:max-w-4xl bg-[#111113] border border-zinc-800 rounded-xl p-6 sm:p-8 grid grid-cols-1 lg:grid-cols-2 lg:items-center gap-6 lg:gap-10">
         {/* Info / Clock column (left on landscape, split cleanly below QR on portrait) */}
         <div className="min-w-0 flex flex-col items-center lg:items-start text-center lg:text-left gap-6">
           <div>
-            <BrandLogo variant="lockup-dark" priority className="h-10 w-auto mx-auto lg:mx-0 mb-2 rounded-xl" />
-            <h1 className="text-gray-300 text-sm font-medium uppercase tracking-wider">
+            <BrandLogo variant="lockup-auto" priority className="h-10 w-auto mx-auto lg:mx-0 mb-2 rounded-lg" />
+            <h1 className="text-zinc-400 text-xs font-medium uppercase tracking-wider">
               {t('attendance.kiosk.title')}
             </h1>
           </div>
 
           <KioskWallClock alignedLeftOnLarge />
 
-          <ol className="hidden lg:block w-full bg-gray-800/70 border border-gray-700/60 rounded-2xl p-4 space-y-2 text-left">
+          {kioskKey && effectiveStatus.kind !== 'fatal' && (
+            <div className="inline-flex rounded-lg bg-zinc-900 border border-zinc-800 p-1 gap-1">
+              <button
+                type="button"
+                onClick={() => setMode('qr')}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  mode === 'qr'
+                    ? 'bg-emerald-500 text-zinc-950'
+                    : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                <QrCode className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('attendance.kiosk.modeDisplayQr')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('camera')}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  mode === 'camera'
+                    ? 'bg-emerald-500 text-zinc-950'
+                    : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                <Camera className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('attendance.kiosk.modeCameraCheckIn')}
+              </button>
+            </div>
+          )}
+
+          <ol className="hidden lg:block w-full bg-zinc-900/70 border border-zinc-800 rounded-xl p-4 space-y-2 text-left">
             {[1, 2, 3, 4].map((step) => (
               <li key={step} className="text-gray-200 text-sm flex items-start gap-2">
                 <span className="text-emerald-400 shrink-0" aria-hidden="true">›</span>
-                <span>{t(`attendance.kiosk.steps.${step}`)}</span>
+                <span>
+                  {mode === 'camera'
+                    ? t(`attendance.kiosk.cameraSteps.${step}`)
+                    : t(`attendance.kiosk.steps.${step}`)}
+                </span>
               </li>
             ))}
           </ol>
         </div>
 
-        {/* QR column */}
+        {/* Right column: Display QR OR Camera Scanner */}
+        {mode === 'camera' && kioskKey && effectiveStatus.kind !== 'fatal' ? (
+          <div className="min-w-0 flex flex-col items-center gap-4 w-full">
+            <div className="relative w-full max-w-[360px] aspect-square overflow-hidden rounded-xl bg-[#09090B] border border-zinc-800 flex items-center justify-center">
+              {cameraError ? (
+                <div className="p-6 text-center text-sm text-amber-200 space-y-2">
+                  <ShieldAlert className="w-8 h-8 text-amber-400 mx-auto" />
+                  <p>{cameraError}</p>
+                </div>
+              ) : (
+                <div id={readerId} className="w-full h-full [&_video]:object-cover" />
+              )}
+
+              {cameraBanner && (
+                <div
+                  role="status"
+                  className={`absolute inset-x-3 bottom-3 rounded-xl p-4 shadow-md border ${
+                    cameraBanner.kind === 'ok'
+                      ? 'bg-emerald-900/95 border-emerald-400/50 text-white'
+                      : 'bg-red-950/95 border-red-400/50 text-red-100'
+                  }`}
+                >
+                  {cameraBanner.kind === 'ok' ? (
+                    <div className="flex items-start gap-3">
+                      <CheckCircle2 className="w-6 h-6 text-emerald-300 shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="font-bold text-base truncate">{cameraBanner.data.employee_name}</p>
+                        <p className="text-xs text-emerald-100">
+                          {cameraBanner.data.employee_number} ·{' '}
+                          {cameraBanner.data.action === 'check_out'
+                            ? t('attendance.kiosk.checkedOutOk')
+                            : t('attendance.kiosk.checkedInOk')}
+                          {' · '}
+                          {formatTimeSeconds(cameraBanner.data.timestamp)}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2.5 text-sm">
+                      <XCircle className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
+                      <span>{cameraBanner.message}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 text-center">
+              {t('attendance.kiosk.cameraHint')}
+            </p>
+          </div>
+        ) : (
         <div className="min-w-0 flex flex-col items-center gap-5 w-full">
           <div className="relative w-full flex justify-center">
             {effectiveStatus.kind === 'loading' && (
               <div
                 role="status"
                 aria-label={t('common.loading')}
-                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center gap-3 bg-gray-800 rounded-2xl"
+                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl"
               >
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white" />
                 <span className="sr-only">{t('common.loading')}</span>
@@ -345,7 +587,7 @@ export function AttendanceKioskPublic() {
             {effectiveStatus.kind === 'transient' && (
               <div
                 role="alert"
-                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center bg-amber-950/40 border border-amber-500/30 rounded-2xl gap-3 px-6 text-center"
+                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center bg-amber-950/40 border border-amber-500/30 rounded-xl gap-3 px-6 text-center"
               >
                 <Wifi className="w-10 h-10 text-amber-400" aria-hidden="true" />
                 <p className="text-amber-200 text-sm">{effectiveStatus.message}</p>
@@ -357,7 +599,7 @@ export function AttendanceKioskPublic() {
                     backoffRef.current = 2000;
                     scheduleMint(0);
                   }}
-                  className="mt-1 min-h-11 inline-flex items-center gap-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 px-4 py-2.5 text-sm font-semibold text-amber-100 transition-colors disabled:opacity-60"
+                  className="mt-1 min-h-11 inline-flex items-center gap-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 px-4 py-2.5 text-sm font-semibold text-amber-100 transition-colors disabled:opacity-60"
                 >
                   <RefreshCw className={`w-4 h-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
                   {t('attendance.kiosk.retryNow')}
@@ -367,14 +609,14 @@ export function AttendanceKioskPublic() {
             {effectiveStatus.kind === 'fatal' && (
               <div
                 role="alert"
-                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center bg-red-950/50 border border-red-500/30 rounded-2xl gap-3 px-6 text-center"
+                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center bg-red-950/50 border border-red-500/30 rounded-xl gap-3 px-6 text-center"
               >
                 <ShieldAlert className="w-10 h-10 text-red-400" aria-hidden="true" />
                 <p className="text-red-200 text-sm">{effectiveStatus.message}</p>
               </div>
             )}
             {effectiveStatus.kind === 'ok' && (
-              <div className="relative w-full max-w-[320px] md:max-w-[360px] lg:max-w-[380px] bg-white p-3 sm:p-4 rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.15)]">
+              <div className="relative w-full max-w-[320px] md:max-w-[360px] lg:max-w-[380px] bg-white border border-zinc-700 p-3 sm:p-4 rounded-xl">
                 <canvas
                   ref={canvasRef}
                   role="img"
@@ -387,7 +629,7 @@ export function AttendanceKioskPublic() {
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div
                       role="status"
-                      className="rounded-xl bg-gray-900/90 border border-gray-700 px-4 py-2 text-sm font-semibold text-white shadow-lg"
+                      className="rounded-lg bg-zinc-900 border border-zinc-700 px-4 py-2 text-sm font-semibold text-white shadow-md"
                     >
                       {t('attendance.qrPanel.refreshing')}
                     </div>
@@ -427,7 +669,7 @@ export function AttendanceKioskPublic() {
           )}
 
           {/* Instructions sit below QR on portrait tablets/phones so the QR code stays prominent */}
-          <ol className="lg:hidden w-full bg-gray-800/70 border border-gray-700/60 rounded-2xl p-4 space-y-2 text-left">
+          <ol className="lg:hidden w-full bg-zinc-900/70 border border-zinc-800 rounded-xl p-4 space-y-2 text-left">
             {[1, 2, 3, 4].map((step) => (
               <li key={step} className="text-gray-200 text-sm flex items-start gap-2">
                 <span className="text-emerald-400 shrink-0" aria-hidden="true">›</span>
@@ -436,11 +678,14 @@ export function AttendanceKioskPublic() {
             ))}
           </ol>
         </div>
+        )}
       </div>
 
       <div className="mt-6 flex items-center gap-2 text-gray-400 text-xs">
         <Clock className="w-3.5 h-3.5" aria-hidden="true" />
-        <span>{t('attendance.kiosk.autoRegen')}</span>
+        <span>
+          {mode === 'camera' ? t('attendance.kiosk.cameraFooter') : t('attendance.kiosk.autoRegen')}
+        </span>
       </div>
     </main>
   );

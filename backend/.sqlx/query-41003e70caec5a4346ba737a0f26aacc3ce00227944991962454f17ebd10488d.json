@@ -1,0 +1,221 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT d.id, d.company_id, d.employee_id,\n                  e.employee_number, e.full_name, e.department,\n                  d.device_label, d.public_key_fingerprint, d.user_agent,\n                  d.status, d.approved_by, d.approved_at,\n                  d.revoked_by, d.revoked_at, d.revoke_reason,\n                  d.last_used_at, d.created_at\n           FROM employee_attendance_devices d\n           JOIN employees e ON e.id = d.employee_id AND e.company_id = d.company_id\n           WHERE d.company_id = $1\n             AND ($2::text IS NULL OR d.status = $2)\n           ORDER BY\n             CASE d.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,\n             d.created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "employee_number",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "employee_number"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "full_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "department",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "department"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "device_label",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "device_label"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "public_key_fingerprint",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "public_key_fingerprint"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "user_agent",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "user_agent"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "status",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "approved_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "approved_by"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "approved_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "approved_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "revoked_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "revoked_by"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "revoked_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "revoked_at"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "revoke_reason",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "revoke_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "last_used_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "last_used_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "employee_attendance_devices",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "41003e70caec5a4346ba737a0f26aacc3ce00227944991962454f17ebd10488d"
+}

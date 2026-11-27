@@ -45,6 +45,8 @@ export type CheckInFailure =
   | 'expired-code'
   | 'no-passkey'
   | 'not-enabled'
+  | 'device-not-approved'
+  | 'photo-required'
   | 'generic';
 
 /**
@@ -63,10 +65,30 @@ export function classifyCheckInError(message: string): CheckInFailure {
   if (/approved office location/.test(m)) return 'outside-geofence';
   if (/approved office network/.test(m)) return 'offsite-network';
   if (/location is required|enable location services/.test(m)) return 'location-permission';
+  if (
+    /attendance device is required|device has been revoked|pending hr approval|device ownership verification/.test(
+      m,
+    )
+  ) {
+    return 'device-not-approved';
+  }
+  if (/live check-?in photo is required|live check-?out photo is required|photo is required/.test(m)) {
+    return 'photo-required';
+  }
   if (/revoked|expired/.test(m)) return 'expired-code';
   if (/no passkeys registered/.test(m)) return 'no-passkey';
   if (/not enabled for this company/.test(m)) return 'not-enabled';
   return 'generic';
+}
+
+export function parsePersonalQrToken(decoded: string): string | null {
+  const raw = decoded.trim();
+  if (!raw) return null;
+  if (raw.startsWith('payroll-kiosk:')) {
+    const tok = raw.slice('payroll-kiosk:'.length).trim();
+    return /^[0-9a-f]{16,}$/i.test(tok) ? tok : null;
+  }
+  return /^[0-9a-f]{16,}$/i.test(raw) ? raw : null;
 }
 
 // ─── QR payload ───────────────────────────────────────────────────────────────

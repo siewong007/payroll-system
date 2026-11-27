@@ -26,7 +26,6 @@ import {
   Settings,
   Shield,
   ShieldCheck,
-  Sparkles,
   Sun,
   Upload,
   User,
@@ -54,20 +53,22 @@ interface PaletteItem {
   onSelect: () => void;
 }
 
-export function CommandPalette() {
+export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const { t, i18n } = useTranslation();
   const { user, isAuthenticated } = useAuth();
   const { resolvedTheme, toggleTheme } = useAppearance();
   const navigate = useNavigate();
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const wasOpenRef = useRef(false);
+  const previousFocusRef = useRef<HTMLElement | null>(
+    defaultOpen && typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null,
+  );
+  const wasOpenRef = useRef(defaultOpen);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const close = useCallback(() => {
@@ -299,7 +300,7 @@ export function CommandPalette() {
           id: 'act-process-payroll',
           group: 'actions',
           label: t('ux.commandPalette.processPayroll'),
-          icon: Sparkles,
+          icon: Calculator,
           onSelect: () => {
             navigate('/payroll/process');
             close();
@@ -398,7 +399,7 @@ export function CommandPalette() {
     <>
       <div
         onClick={close}
-        className="animate-fade-in fixed inset-0 z-[75] bg-slate-950/55 backdrop-blur-sm"
+        className="animate-fade-in fixed inset-0 z-[75] bg-black/45"
         aria-hidden="true"
       />
       <div
@@ -406,98 +407,98 @@ export function CommandPalette() {
         role="dialog"
         aria-modal="true"
         aria-label={t('nav.quickSearch')}
-        className="animate-scale-in fixed inset-x-4 top-[12vh] z-[76] mx-auto max-w-xl overflow-hidden rounded-2xl bg-white dark:bg-slate-900 shadow-2xl ring-1 ring-black/10 dark:ring-white/10"
+        className="animate-scale-in fixed inset-x-4 top-[12vh] z-[76] mx-auto max-w-lg overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-lg"
       >
-            <div className="flex items-center gap-3 border-b border-gray-200/80 dark:border-slate-800 px-4 py-3.5">
-              {searchingEmployees ? (
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--accent-1)]" aria-hidden="true" />
-              ) : (
-                <Search className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
-              )}
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setActiveIndex(0);
-                }}
-                onKeyDown={handleListKeyDown}
-                placeholder={t('ux.commandPalette.placeholder')}
-                aria-label={t('ux.commandPalette.placeholder')}
-                className="flex-1 bg-transparent text-base sm:text-sm text-gray-900 dark:text-slate-100 placeholder:text-gray-400 focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={close}
-                aria-label={t('a11y.closeDialog')}
-                className="sm:hidden min-h-10 min-w-10 -mr-2 inline-flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
-              <kbd className="hidden sm:inline-flex items-center rounded-md border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:text-slate-400">
-                ESC
-              </kbd>
-            </div>
+        <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-3.5 py-2.5">
+          {searchingEmployees ? (
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--accent-1)]" aria-hidden="true" />
+          ) : (
+            <Search className="h-4 w-4 shrink-0 text-[var(--subtle-foreground)]" aria-hidden="true" />
+          )}
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setActiveIndex(0);
+            }}
+            onKeyDown={handleListKeyDown}
+            placeholder={t('ux.commandPalette.placeholder')}
+            aria-label={t('ux.commandPalette.placeholder')}
+            className="flex-1 bg-transparent text-base sm:text-sm text-[var(--foreground)] placeholder:text-[var(--subtle-foreground)] focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={close}
+            aria-label={t('a11y.closeDialog')}
+            className="sm:hidden min-h-10 min-w-10 -mr-1.5 inline-flex items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <kbd className="hidden sm:inline-flex items-center rounded border border-[var(--border)] bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--muted-foreground)]">
+            ESC
+          </kbd>
+        </div>
 
-            <div className="max-h-[55vh] overflow-y-auto p-2 scrollbar-thin">
-              {filtered.length === 0 ? (
-                <p className="py-10 text-center text-sm text-gray-400 dark:text-slate-500">
-                  {searchingEmployees ? t('ux.employeesSearch.searching') : t('ux.commandPalette.noMatches')}
-                </p>
-              ) : (
-                groups.map((group) => {
-                  const groupItems = filtered.filter((i) => i.group === group.key);
-                  if (groupItems.length === 0) return null;
-                  return (
-                    <div key={group.key} className="mb-2 last:mb-0">
-                      <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">
-                        {group.title}
-                      </p>
-                      <div className="space-y-0.5">
-                        {groupItems.map((item) => {
-                          const flatIndex = filtered.indexOf(item);
-                          const isSelected = flatIndex === clampedIndex;
-                          const Icon = item.icon;
-                          return (
-                            <button
-                              key={item.id}
-                              ref={(el) => {
-                                itemRefs.current[flatIndex] = el;
-                              }}
-                              type="button"
-                              onMouseEnter={() => setActiveIndex(flatIndex)}
-                              onClick={item.onSelect}
-                              className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-                                isSelected
-                                  ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent-1)] dark:text-white'
-                                  : 'text-gray-700 hover:bg-gray-100/70 dark:text-slate-300 dark:hover:bg-slate-800/60'
-                              }`}
-                            >
-                              <span className="flex items-center gap-3 min-w-0">
-                                <Icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden="true" />
-                                <span className="truncate">{item.label}</span>
-                              </span>
-                              {item.sublabel && (
-                                <span className="shrink-0 text-xs font-normal text-gray-400 dark:text-slate-500">
-                                  {item.sublabel}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+        <div className="max-h-[55vh] overflow-y-auto p-1.5 scrollbar-thin">
+          {filtered.length === 0 ? (
+            <p className="py-8 text-center text-[13px] text-[var(--muted-foreground)]">
+              {searchingEmployees ? t('ux.employeesSearch.searching') : t('ux.commandPalette.noMatches')}
+            </p>
+          ) : (
+            groups.map((group) => {
+              const groupItems = filtered.filter((i) => i.group === group.key);
+              if (groupItems.length === 0) return null;
+              return (
+                <div key={group.key} className="mb-1.5 last:mb-0">
+                  <p className="px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--subtle-foreground)]">
+                    {group.title}
+                  </p>
+                  <div className="space-y-0.5">
+                    {groupItems.map((item) => {
+                      const flatIndex = filtered.indexOf(item);
+                      const isSelected = flatIndex === clampedIndex;
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          ref={(el) => {
+                            itemRefs.current[flatIndex] = el;
+                          }}
+                          type="button"
+                          onMouseEnter={() => setActiveIndex(flatIndex)}
+                          onClick={item.onSelect}
+                          className={`flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors ${
+                            isSelected
+                              ? 'bg-[var(--surface-subtle)] font-medium text-[var(--foreground)]'
+                              : 'text-[var(--muted-foreground)] hover:bg-[var(--surface-subtle)]/60 hover:text-[var(--foreground)]'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2.5 min-w-0">
+                            <Icon className="h-4 w-4 shrink-0 opacity-75" aria-hidden="true" />
+                            <span className="truncate">{item.label}</span>
+                          </span>
+                          {item.sublabel && (
+                            <span className="shrink-0 text-xs font-normal text-[var(--subtle-foreground)]">
+                              {item.sublabel}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
 
-            <div className="hidden sm:flex items-center justify-between border-t border-gray-100 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-950/50 px-4 py-2 text-[11px] text-gray-400 dark:text-slate-500">
-              <span>↑↓ {t('ux.commandPalette.hintNavigate')}</span>
-              <span>↵ {t('ux.commandPalette.hintOpen')}</span>
-              <span>ESC {t('ux.commandPalette.hintClose')}</span>
-            </div>
+        <div className="hidden sm:flex items-center justify-between border-t border-[var(--border)] bg-[var(--surface-subtle)]/60 px-3.5 py-1.5 text-[11px] text-[var(--muted-foreground)]">
+          <span>↑↓ {t('ux.commandPalette.hintNavigate')}</span>
+          <span>↵ {t('ux.commandPalette.hintOpen')}</span>
+          <span>ESC {t('ux.commandPalette.hintClose')}</span>
+        </div>
       </div>
     </>
   );

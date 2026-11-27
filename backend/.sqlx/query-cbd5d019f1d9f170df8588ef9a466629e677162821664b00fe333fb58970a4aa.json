@@ -1,0 +1,126 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH daily AS (\n               SELECT ar.employee_id,\n                      (ar.check_in_at AT TIME ZONE $4)::date AS local_date,\n                      MIN(ar.check_in_at) AS check_in_at,\n                      MAX(ar.check_out_at) AS check_out_at,\n                      (ARRAY_AGG(ar.latitude ORDER BY ar.check_in_at) FILTER (WHERE ar.latitude IS NOT NULL))[1] AS lat,\n                      (ARRAY_AGG(ar.longitude ORDER BY ar.check_in_at) FILTER (WHERE ar.longitude IS NOT NULL))[1] AS lng\n               FROM attendance_records ar\n               WHERE ar.company_id = $1\n                 AND ar.status <> 'absent'\n                 AND ar.method <> 'manual'\n                 AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4\n                 AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4\n               GROUP BY ar.employee_id, (ar.check_in_at AT TIME ZONE $4)::date\n           )\n           SELECT a.employee_id AS \"employee_a_id!\",\n                  ea.employee_number AS \"employee_a_number!\",\n                  ea.full_name AS \"employee_a_name!\",\n                  b.employee_id AS \"employee_b_id!\",\n                  eb.employee_number AS \"employee_b_number!\",\n                  eb.full_name AS \"employee_b_name!\",\n                  COUNT(*)::bigint AS \"paired_days!\",\n                  COUNT(*) FILTER (\n                      WHERE a.check_out_at IS NOT NULL\n                        AND b.check_out_at IS NOT NULL\n                        AND ABS(EXTRACT(EPOCH FROM (a.check_out_at - b.check_out_at))) <= 60\n                  )::bigint AS \"paired_checkout_days!\",\n                  COUNT(*) FILTER (\n                      WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL\n                        AND b.lat IS NOT NULL AND b.lng IS NOT NULL\n                        AND ABS(a.lat - b.lat) <= 0.00015\n                        AND ABS(a.lng - b.lng) <= 0.00015\n                  )::bigint AS \"co_located_days!\",\n                  ROUND(AVG(ABS(EXTRACT(EPOCH FROM (a.check_in_at - b.check_in_at)))))::bigint AS \"avg_gap_seconds!\",\n                  MAX(a.local_date) AS \"last_paired_date!\"\n           FROM daily a\n           JOIN daily b\n             ON a.local_date = b.local_date\n            AND a.employee_id < b.employee_id\n            AND ABS(EXTRACT(EPOCH FROM (a.check_in_at - b.check_in_at))) <= 60\n           JOIN employees ea ON ea.id = a.employee_id AND ea.company_id = $1\n           JOIN employees eb ON eb.id = b.employee_id AND eb.company_id = $1\n           GROUP BY a.employee_id, ea.employee_number, ea.full_name,\n                    b.employee_id, eb.employee_number, eb.full_name\n           HAVING COUNT(*) >= 3\n           ORDER BY COUNT(*) DESC, MAX(a.local_date) DESC\n           LIMIT 100",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_a_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_a_number!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "employee_number"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_a_name!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "employee_b_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "employee_b_number!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "employee_number"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "employee_b_name!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "paired_days!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "paired_checkout_days!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "co_located_days!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "avg_gap_seconds!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_paired_date!",
+        "type_info": "Date",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "cbd5d019f1d9f170df8588ef9a466629e677162821664b00fe333fb58970a4aa"
+}
