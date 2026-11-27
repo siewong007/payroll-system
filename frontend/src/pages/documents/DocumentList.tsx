@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -79,7 +80,7 @@ function getStatusColor(status: string, expiryDate: string | null) {
 }
 
 function getStatusLabel(
-  t: (key: string, opts?: Record<string, unknown>) => string,
+  t: TFunction,
   status: string,
   expiryDate: string | null,
 ) {

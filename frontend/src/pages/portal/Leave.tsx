@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation, Trans } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2, Loader2 } from 'lucide-react';
@@ -64,7 +65,7 @@ function getLeaveEligibility(
   return { eligible: true };
 }
 
-const statusBadge = (status: string, t: (key: string, opts?: Record<string, unknown>) => string) => {
+const statusBadge = (status: string, t: TFunction) => {
   const cls: Record<string, string> = {
     pending: 'badge-pending', approved: 'badge-approved',
     rejected: 'badge-rejected', cancelled: 'badge-cancelled',
@@ -78,7 +79,7 @@ const statusBadge = (status: string, t: (key: string, opts?: Record<string, unkn
 
 function getBalanceColumns(
   profile: Employee | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string,
+  t: TFunction,
 ): Column<LeaveBalance>[] {
   return [
     { key: 'type', primary: true, header: t('portal.leave.cols.type'), render: (b) => <span className="font-semibold text-gray-900 dark:text-slate-100">{b.leave_type_name}</span> },
@@ -136,7 +137,7 @@ function getBalanceColumns(
 }
 
 const getRequestColumns = (
-  t: (key: string, opts?: Record<string, unknown>) => string,
+  t: TFunction,
 ): Column<LeaveRequest>[] => [
   { key: 'type', primary: true, header: t('portal.leave.cols.type'), render: (r) => <span className="font-semibold text-gray-900 dark:text-slate-100">{r.leave_type_name}</span> },
   {

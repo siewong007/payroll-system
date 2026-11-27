@@ -5,10 +5,10 @@
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    /* vitest runs with `globals: true`, and setup.ts pulls in the jest-dom
-       matchers — without these two the suite fails to resolve `describe`,
-       `expect` and `toBeInTheDocument`. */
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
+    /* vitest runs with `globals: true`, and setup.ts imports
+       `@testing-library/jest-dom/vitest` (which augments Vitest's `Assertion`
+       types). */
+    "types": ["vite/client", "vitest/globals"],
     "skipLibCheck": true,
 
     /* Bundler mode */

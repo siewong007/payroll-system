@@ -51,6 +51,7 @@ import {
   setAuthIdentity,
 } from '../api/client';
 
+const createCalls = axiosMocks.create.mock.calls.slice();
 const requestHandler = axiosMocks.requestUse.mock.calls[0][0] as RequestHandler;
 const responseHandler = axiosMocks.responseUse.mock.calls[0][0] as ResponseHandler;
 const responseErrorHandler = axiosMocks.responseUse.mock.calls[0][1] as ResponseErrorHandler;
@@ -80,11 +81,15 @@ describe('API client', () => {
   });
 
   it('creates one credentialed JSON client at the API root', () => {
-    expect(axiosMocks.create).toHaveBeenCalledWith({
-      baseURL: '/api',
-      headers: { 'Content-Type': 'application/json' },
-      withCredentials: true,
-    });
+    expect(createCalls).toEqual([
+      [
+        {
+          baseURL: '/api',
+          headers: { 'Content-Type': 'application/json' },
+          withCredentials: true,
+        },
+      ],
+    ]);
   });
 
   it('stores the access token in memory only', () => {
