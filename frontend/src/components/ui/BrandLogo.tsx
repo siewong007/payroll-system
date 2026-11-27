@@ -10,8 +10,8 @@ interface BrandLogoProps {
 const BRAND_ASSETS: Record<Exclude<BrandLogoVariant, 'lockup-auto'>, { src: string; width: number; height: number }> = {
   'icon-dark': { src: '/branding/payrollmy-icon-dark.svg', width: 72, height: 72 },
   'icon-primary': { src: '/branding/payrollmy-icon-primary.svg', width: 72, height: 72 },
-  'lockup-dark': { src: '/branding/payrollmy-lockup-dark.svg', width: 320, height: 72 },
-  'lockup-light': { src: '/branding/payrollmy-lockup-light.svg', width: 320, height: 72 },
+  'lockup-dark': { src: '/branding/payrollmy-lockup-dark.svg', width: 244, height: 72 },
+  'lockup-light': { src: '/branding/payrollmy-lockup-light.svg', width: 244, height: 72 },
 };
 
 export function BrandLogo({
@@ -42,7 +42,7 @@ export function BrandLogo({
           height={dark.height}
           decoding="async"
           fetchPriority={priority ? 'high' : undefined}
-          className={`hidden dark:block rounded-md ${className ?? ''}`}
+          className={`hidden dark:block ${className ?? ''}`}
           draggable={false}
         />
       </>

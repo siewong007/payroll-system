@@ -5,7 +5,6 @@ import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
-import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
 
 type LegalTab = 'terms' | 'privacy' | 'compliance';
 
@@ -93,13 +92,8 @@ export function LegalPage() {
             <BrandLogo variant="lockup-auto" className="hidden md:block h-7 w-auto rounded-md" />
           </div>
 
-          <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto justify-between sm:justify-end">
-            <div className="min-w-0 flex-1 sm:flex-initial max-w-[206px]">
-              <AppearanceSwitcher />
-            </div>
-            <div className="w-[118px] sm:w-[132px] shrink-0">
-              <LanguageSwitcher />
-            </div>
+          <div className="flex items-center justify-end shrink-0">
+            <LanguageSwitcher />
           </div>
         </div>
       </header>

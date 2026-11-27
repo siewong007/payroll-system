@@ -12,7 +12,7 @@ function readStoredMode(): AppearanceMode {
   } catch {
     // Ignore storage access errors in restricted/test environments.
   }
-  return 'light';
+  return 'system';
 }
 
 function detectSystemDark(): boolean {

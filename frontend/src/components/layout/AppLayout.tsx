@@ -186,8 +186,10 @@ export function AppLayout() {
 
                 {prefsOpen && (
                   <div className="animate-drop-in absolute right-0 mt-1.5 w-64 rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-md z-40 py-1 overflow-hidden">
-                    <div className="px-3.5 py-2.5 space-y-2 border-b border-[var(--border)]">
-                      <AppearanceSwitcher />
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--border)]">
+                      <div className="min-w-0 flex-1">
+                        <AppearanceSwitcher />
+                      </div>
                       <LanguageSwitcher />
                     </div>
                     {hasPwaAction && (

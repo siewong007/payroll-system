@@ -3,37 +3,46 @@ import { Languages } from 'lucide-react';
 import { LOCALE_LABELS, SUPPORTED_LOCALES, type AppLocale } from '@/i18n';
 
 /**
- * Native <select> on purpose: it is keyboard-accessible, needs no popover
- * positioning inside a scrollable sidebar, and the mobile bottom-bar layouts
- * get an OS picker sheet for free. `changeLanguage` only swaps resources —
- * routes, forms and query caches are untouched, so no state is lost.
+ * Compact icon-only language switcher backed by a visually overlaid native
+ * `<select>` so navigation chrome stays minimal while keyboard access, screen
+ * readers (`aria-label`), and mobile OS picker sheets continue to work cleanly.
  */
 export function LanguageSwitcher({ dark = false }: { dark?: boolean }) {
   const { t, i18n } = useTranslation();
+  const resolved = i18n.resolvedLanguage ?? i18n.language;
+  const currentLocale: AppLocale = SUPPORTED_LOCALES.includes(resolved as AppLocale)
+    ? (resolved as AppLocale)
+    : 'en';
+  const tooltip = `${t('language.label')}: ${LOCALE_LABELS[currentLocale]}`;
+
   return (
-    <label
-      className={`flex items-center gap-2 text-xs ${
-        dark ? 'text-zinc-400' : 'text-[var(--muted-foreground)]'
+    <span
+      title={tooltip}
+      className={`relative inline-flex min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-md border transition-colors focus-within:ring-2 focus-within:ring-[var(--ring)] ${
+        dark
+          ? 'border-white/15 bg-white/5 text-zinc-200 hover:bg-white/10'
+          : 'border-[var(--border-strong)] bg-[var(--card)] text-[var(--muted-foreground)] hover:border-[var(--muted-foreground)] hover:text-[var(--foreground)]'
       }`}
     >
-      <Languages className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      <Languages className="h-4 w-4 pointer-events-none" aria-hidden="true" />
       <span className="sr-only">{t('language.label')}</span>
       <select
         aria-label={t('language.label')}
-        value={i18n.language}
-        onChange={(e) => i18n.changeLanguage(e.target.value as AppLocale)}
-        className={`w-full min-w-0 rounded-md border px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--ring)] ${
-          dark
-            ? 'border-white/15 bg-white/5 text-zinc-200 hover:bg-white/10 [&>option]:bg-zinc-900'
-            : 'border-[var(--border-strong)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--muted-foreground)] dark:[&>option]:bg-zinc-900'
-        }`}
+        title={tooltip}
+        value={currentLocale}
+        onChange={(e) => void i18n.changeLanguage(e.target.value as AppLocale)}
+        className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0"
       >
         {SUPPORTED_LOCALES.map((locale) => (
-          <option key={locale} value={locale}>
+          <option
+            key={locale}
+            value={locale}
+            className="bg-white text-gray-900 dark:bg-zinc-900 dark:text-zinc-100"
+          >
             {LOCALE_LABELS[locale]}
           </option>
         ))}
       </select>
-    </label>
+    </span>
   );
 }

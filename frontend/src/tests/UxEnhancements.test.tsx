@@ -262,6 +262,37 @@ describe('DashboardPage', () => {
 });
 
 describe('ThemeProvider & CommandPalette', () => {
+  it('defaults to system appearance and follows prefers-color-scheme when unset', () => {
+    localStorage.removeItem('payroll-appearance');
+    document.documentElement.classList.remove('dark');
+    const origMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-color-scheme: dark)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    try {
+      render(
+        <ThemeProvider>
+          <AppearanceSwitcher />
+        </ThemeProvider>,
+      );
+
+      expect(screen.getByRole('button', { name: 'System' })).toHaveAttribute('aria-pressed', 'true');
+      expect(document.documentElement.classList.contains('dark')).toBe(true);
+    } finally {
+      window.matchMedia = origMatchMedia;
+      localStorage.removeItem('payroll-appearance');
+      document.documentElement.classList.remove('dark');
+    }
+  });
+
   it('toggles dark class on documentElement via AppearanceSwitcher', async () => {
     const user = userEvent.setup();
     render(
@@ -275,6 +306,8 @@ describe('ThemeProvider & CommandPalette', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     await user.click(screen.getByRole('button', { name: 'Light' }));
     expect(document.documentElement.classList.contains('dark')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'System' }));
+    expect(localStorage.getItem('payroll-appearance')).toBe('system');
   });
 
   it('opens CommandPalette, filters routes by permission, and searches employees live', async () => {

@@ -14,7 +14,7 @@ try {
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-color-scheme: dark)').matches
-  const isDark = mode === 'dark' || (mode === 'system' && prefersDark)
+  const isDark = mode === 'dark' || (mode !== 'light' && prefersDark)
   if (isDark) {
     document.documentElement.classList.add('dark')
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#09090b')

@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 
 interface AuthLayoutProps {
@@ -23,13 +22,8 @@ export function AuthLayout({
 
   return (
     <div className="relative flex min-h-[100dvh] flex-col justify-between overflow-x-hidden bg-[var(--background)] text-[var(--foreground)] px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <header className="mx-auto flex w-full max-w-[400px] flex-wrap items-center justify-between gap-2 pb-4">
-        <div className="min-w-0 flex-1 max-w-[202px]">
-          <AppearanceSwitcher />
-        </div>
-        <div className="w-[118px] sm:w-[132px] shrink-0">
-          <LanguageSwitcher />
-        </div>
+      <header className="mx-auto flex w-full max-w-[400px] items-center justify-end pb-4">
+        <LanguageSwitcher />
       </header>
 
       <main className="flex flex-1 items-center justify-center py-2 sm:py-4">
